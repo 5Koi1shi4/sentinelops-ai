@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: sentinelops-api
+  datasource:
+    url: ${SENTINELOPS_DB_URL:jdbc:postgresql://localhost:5432/sentinelops}
+    username: ${SENTINELOPS_DB_USERNAME:sentinelops}
+    password: ${SENTINELOPS_DB_PASSWORD:sentinelops}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+      leak-detection-threshold: 10000
+      data-source-properties:
+        options: -c statement_timeout=5000
+  jpa:
+    open-in-view: false
+  flyway:
+    enabled: true
