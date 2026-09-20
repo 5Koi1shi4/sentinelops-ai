@@ -45,7 +45,9 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "outbox_event",
                 "audit_record",
                 "idempotency_record",
-                "diagnosis_run_evidence");
+                "diagnosis_run_evidence",
+                "verification_cycle",
+                "verification_attempt");
 
         var indexes = jdbc.sql("""
                         select indexname from pg_indexes where schemaname = 'public'
@@ -59,7 +61,10 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "outbox_pending_claim_idx",
                 "outbox_retry_ready_idx",
                 "idempotency_expiry_idx",
-                "diagnosis_run_evidence_snapshot_idx");
+                "diagnosis_run_evidence_snapshot_idx",
+                "verification_cycle_reclaim_idx",
+                "verification_cycle_incident_running_uk",
+                "verification_attempt_cycle_time_idx");
 
         var currentVersion = jdbc.sql("""
                         select version
@@ -71,7 +76,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("10");
+        assertThat(currentVersion).isEqualTo("11");
 
         var executionColumns = jdbc.sql("""
                         select column_name
@@ -81,6 +86,15 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .list();
         assertThat(executionColumns).contains("claim_attempt_key");
+        var verificationColumns = jdbc.sql("""
+                        select column_name
+                        from information_schema.columns
+                        where table_schema = 'public'
+                          and table_name = 'verification_cycle'
+                        """)
+                .query(String.class)
+                .list();
+        assertThat(verificationColumns).contains("claim_token");
     }
 
     @Test

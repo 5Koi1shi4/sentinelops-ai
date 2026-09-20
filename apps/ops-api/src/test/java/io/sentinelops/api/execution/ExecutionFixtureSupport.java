@@ -18,15 +18,20 @@ abstract class ExecutionFixtureSupport extends PostgresIntegrationTest {
     @Autowired protected JdbcClient jdbc;
 
     protected Fixture approvedFixture() {
-        UUID serviceId = jdbc.sql("select id from service_catalog where service_key = 'checkout-api'")
-                .query(UUID.class)
-                .single();
         UUID runbookVersionId = jdbc.sql("""
                         select rv.id
                         from runbook_version rv
                         join runbook r on r.id = rv.runbook_id
-                        where r.runbook_key = 'RB-DB-POOL-03' and rv.lifecycle = 'published'
+                        where r.runbook_key = 'RB-DB-POOL-03'
+                          and rv.version_number = 1
                         """)
+                .query(UUID.class)
+                .single();
+        return approvedFixture(runbookVersionId);
+    }
+
+    protected Fixture approvedFixture(UUID runbookVersionId) {
+        UUID serviceId = jdbc.sql("select id from service_catalog where service_key = 'checkout-api'")
                 .query(UUID.class)
                 .single();
         UUID requesterId = jdbc.sql("select id from principal where subject = 'demo-author'")

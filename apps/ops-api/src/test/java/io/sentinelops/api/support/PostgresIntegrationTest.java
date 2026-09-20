@@ -39,5 +39,10 @@ public abstract class PostgresIntegrationTest {
                 "sentinelops.security.issuer",
                 () -> "https://issuer.sentinelops.test");
         registry.add("sentinelops.outbox.relay-enabled", () -> false);
+        registry.add("sentinelops.verification.scheduler-enabled", () -> false);
+        registry.add("sentinelops.verification.max-delay", () -> "PT0S");
+        registry.add(
+                "sentinelops.verification.demo-checkout-base-url",
+                () -> "http://localhost.invalid");
     }
 }

@@ -45,6 +45,12 @@ sentinelops:
     retry-base-delay: 1s
     retry-max-delay: 5m
     max-publish-attempts: 20
+  verification:
+    scheduler-enabled: ${SENTINELOPS_VERIFICATION_ENABLED:true}
+    worker-id: ${HOSTNAME:}
+    poll-interval: 1s
+    max-delay: 5s
+    demo-checkout-base-url: ${SENTINELOPS_DEMO_SERVICE_URL:http://localhost:8082}
 
 management:
   endpoint:

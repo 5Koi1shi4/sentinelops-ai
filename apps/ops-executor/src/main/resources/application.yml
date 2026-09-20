@@ -29,6 +29,11 @@ sentinelops:
   execution-ticket:
     issuer: urn:sentinelops:ops-api
     audience: sentinelops-executor
+  targets:
+    demo-checkout:
+      base-url: ${SENTINELOPS_DEMO_SERVICE_URL:http://localhost:8082}
+      audience: demo-service
+      scope: runbook:execute:checkout
 
 management:
   endpoint:

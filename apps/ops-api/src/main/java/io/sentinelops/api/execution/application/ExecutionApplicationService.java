@@ -4,6 +4,7 @@ import io.sentinelops.api.execution.adapter.out.persistence.ExecutionStore;
 import io.sentinelops.api.execution.adapter.out.persistence.ExecutionStore.CreationContext;
 import io.sentinelops.api.execution.adapter.out.persistence.ExecutionStore.LeaseSnapshot;
 import io.sentinelops.api.execution.adapter.out.persistence.OutboxStore;
+import io.sentinelops.api.execution.adapter.out.persistence.VerificationStore;
 import io.sentinelops.api.execution.application.ExecutionTicketVerifier.VerifiedTicket;
 import io.sentinelops.api.execution.domain.Execution;
 import io.sentinelops.api.execution.domain.ExecutionStatus;
@@ -43,6 +44,7 @@ public class ExecutionApplicationService {
 
     private final ExecutionStore store;
     private final OutboxStore outbox;
+    private final VerificationStore verificationStore;
     private final ExecutionTicketSigner ticketSigner;
     private final ExecutionTicketVerifier ticketVerifier;
     private final IdempotencyService idempotency;
@@ -54,6 +56,7 @@ public class ExecutionApplicationService {
     public ExecutionApplicationService(
             ExecutionStore store,
             OutboxStore outbox,
+            VerificationStore verificationStore,
             ExecutionTicketSigner ticketSigner,
             ExecutionTicketVerifier ticketVerifier,
             IdempotencyService idempotency,
@@ -63,6 +66,7 @@ public class ExecutionApplicationService {
             @Value("${sentinelops.execution-ticket.audience}") String ticketAudience) {
         this.store = store;
         this.outbox = outbox;
+        this.verificationStore = verificationStore;
         this.ticketSigner = ticketSigner;
         this.ticketVerifier = ticketVerifier;
         this.idempotency = idempotency;
@@ -599,6 +603,10 @@ public class ExecutionApplicationService {
                 incidentTarget,
                 lease.incidentVersion(),
                 databaseNow);
+        if (executionTarget == ExecutionStatus.VERIFYING) {
+            verificationStore.enqueueExecutionCycle(
+                    ids.generate(), executionId, transition.incidentVersion(), databaseNow);
+        }
         var payload = objectMapper.createObjectNode()
                 .put("executionId", executionId.toString())
                 .put("fencingToken", fencingToken)

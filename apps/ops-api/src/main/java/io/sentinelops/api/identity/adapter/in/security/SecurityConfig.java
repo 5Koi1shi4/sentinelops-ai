@@ -47,6 +47,8 @@ public class SecurityConfig {
                     .hasAnyRole("SRE_APPROVER", "PLATFORM_ADMIN");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/executions")
                     .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
+            authorize.requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/resolve")
+                    .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
             authorize.requestMatchers("/internal/**").hasAuthority(EXECUTOR_AUTHORITY);
             authorize.requestMatchers("/api/**").hasAuthority(API_AUTHORITY);
             authorize.anyRequest().denyAll();
