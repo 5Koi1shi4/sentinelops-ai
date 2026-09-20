@@ -4,21 +4,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import io.sentinelops.api.support.PostgresIntegrationTest;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.Base64;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 class SchemaMigrationIT extends PostgresIntegrationTest {
 
     @Autowired
     JdbcClient jdbc;
 
+    @Autowired
+    ObjectMapper objectMapper;
+
     @Test
-    void createsCoreTablesAndIndexesAtVersionFour() {
+    void createsCoreTablesAndIndexesAtVersionSeven() {
         var tables = jdbc.sql("""
                         select table_name from information_schema.tables
                         where table_schema = 'public'
@@ -34,7 +43,9 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "approval_request",
                 "execution",
                 "outbox_event",
-                "audit_record");
+                "audit_record",
+                "idempotency_record",
+                "diagnosis_run_evidence");
 
         var indexes = jdbc.sql("""
                         select indexname from pg_indexes where schemaname = 'public'
@@ -45,7 +56,9 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
         assertThat(indexes).contains(
                 "incident_active_fingerprint_uk",
                 "incident_event_incident_seq_uk",
-                "outbox_pending_claim_idx");
+                "outbox_pending_claim_idx",
+                "idempotency_expiry_idx",
+                "diagnosis_run_evidence_snapshot_idx");
 
         var currentVersion = jdbc.sql("""
                         select version
@@ -57,12 +70,12 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("4");
+        assertThat(currentVersion).isEqualTo("7");
     }
 
     @Test
     void enforcesActiveFingerprintUniquenessAndAllowsReopenAfterResolution() {
-        var serviceId = insertService("checkout-api");
+        var serviceId = insertService("schema-checkout-api");
         var firstIncidentId = insertIncident(serviceId, "payment-latency", "detected", 0, 1);
 
         var duplicateFailure = catchThrowable(
@@ -171,6 +184,43 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
         assertThat(findSqlState(mutationFailure)).isEqualTo("55000");
     }
 
+    @Test
+    void seedsCanonicalReviewedRunbookAndRejectsPublishedMutation() {
+        var seeded = jdbc.sql("""
+                        select rv.id, rv.definition::text, rv.definition_checksum,
+                               rv.author_principal_id, rv.reviewer_principal_id
+                        from runbook_version rv
+                        join runbook r on r.id = rv.runbook_id
+                        where r.runbook_key = 'RB-DB-POOL-03'
+                          and rv.lifecycle = 'published'
+                        """)
+                .query((resultSet, rowNumber) -> new RunbookSeedRow(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("definition"),
+                        resultSet.getString("definition_checksum"),
+                        resultSet.getObject("author_principal_id", UUID.class),
+                        resultSet.getObject("reviewer_principal_id", UUID.class)))
+                .single();
+
+        assertThat(seeded.authorId()).isNotEqualTo(seeded.reviewerId());
+        assertThat(seeded.checksum()).isEqualTo(canonicalHash(seeded.definition()));
+
+        var updateFailure = catchThrowable(() -> jdbc.sql("""
+                        update runbook_version
+                        set definition = definition || '{"tampered": true}'::jsonb
+                        where id = :id
+                        """)
+                .param("id", seeded.id())
+                .update());
+        var deleteFailure = catchThrowable(() -> jdbc.sql(
+                        "delete from runbook_version where id = :id")
+                .param("id", seeded.id())
+                .update());
+
+        assertThat(findSqlState(updateFailure)).isEqualTo("55000");
+        assertThat(findSqlState(deleteFailure)).isEqualTo("55000");
+    }
+
     private UUID insertService(String serviceKey) {
         var serviceId = UUID.randomUUID();
         var now = OffsetDateTime.parse("2026-09-20T02:00:00Z");
@@ -251,6 +301,38 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
         return null;
     }
 
+    private String canonicalHash(String definition) {
+        try {
+            var canonical = canonicalize(objectMapper.readTree(definition));
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(objectMapper
+                            .writeValueAsString(canonical)
+                            .getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required by the Java runtime", impossible);
+        }
+    }
+
+    private JsonNode canonicalize(JsonNode node) {
+        if (node.isObject()) {
+            var canonical = objectMapper.createObjectNode();
+            node.properties().stream()
+                    .sorted(java.util.Map.Entry.comparingByKey())
+                    .forEach(entry -> canonical.set(entry.getKey(), canonicalize(entry.getValue())));
+            return canonical;
+        }
+        if (node.isArray()) {
+            var canonical = objectMapper.createArrayNode();
+            node.forEach(element -> canonical.add(canonicalize(element)));
+            return canonical;
+        }
+        return node.deepCopy();
+    }
+
     private record ProjectionRow(
             String status, long resourceVersion, long occurrenceCount, OffsetDateTime updatedAt) {}
+
+    private record RunbookSeedRow(
+            UUID id, String definition, String checksum, UUID authorId, UUID reviewerId) {}
 }
