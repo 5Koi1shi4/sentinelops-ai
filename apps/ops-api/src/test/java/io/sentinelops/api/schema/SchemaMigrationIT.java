@@ -27,7 +27,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
     ObjectMapper objectMapper;
 
     @Test
-    void createsCoreTablesAndIndexesAtVersionEight() {
+    void createsCoreTablesAndIndexesAtCurrentVersion() {
         var tables = jdbc.sql("""
                         select table_name from information_schema.tables
                         where table_schema = 'public'
@@ -57,6 +57,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "incident_active_fingerprint_uk",
                 "incident_event_incident_seq_uk",
                 "outbox_pending_claim_idx",
+                "outbox_retry_ready_idx",
                 "idempotency_expiry_idx",
                 "diagnosis_run_evidence_snapshot_idx");
 
@@ -70,7 +71,16 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("8");
+        assertThat(currentVersion).isEqualTo("10");
+
+        var executionColumns = jdbc.sql("""
+                        select column_name
+                        from information_schema.columns
+                        where table_schema = 'public' and table_name = 'execution'
+                        """)
+                .query(String.class)
+                .list();
+        assertThat(executionColumns).contains("claim_attempt_key");
     }
 
     @Test

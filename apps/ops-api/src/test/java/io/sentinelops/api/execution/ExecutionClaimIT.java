@@ -66,6 +66,18 @@ class ExecutionClaimIT extends ExecutionFixtureSupport {
                 completion,
                 principalKey,
                 completionKey);
+        var replayedClaimAfterCompletion = executions.claim(
+                created.id(), "executor-idempotent", principalKey, claimKey);
+
+        assertThat(replayedClaimAfterCompletion).isEqualTo(firstClaim);
+        assertThatThrownBy(() -> executions.claim(
+                        created.id(),
+                        "executor-idempotent",
+                        principalKey,
+                        claimKey + "-redelivery"))
+                .isInstanceOfSatisfying(ApiProblemException.class,
+                        problem -> assertThat(problem.errorCode())
+                                .isEqualTo("execution_not_claimable"));
         doThrow(new InvalidExecutionTicket("expired test ticket"))
                 .when(ticketVerifier)
                 .verify(anyString(), anyString(), anyString(), any(Instant.class));
@@ -184,13 +196,91 @@ class ExecutionClaimIT extends ExecutionFixtureSupport {
                     assertThat(failure.getCause())
                             .isInstanceOfSatisfying(ApiProblemException.class,
                                     problem -> assertThat(problem.errorCode())
-                                            .isEqualTo("execution_not_claimable"));
+                                            .isEqualTo("execution_lease_active"));
                     conflicts++;
                 }
             }
             assertThat(successes).isOne();
             assertThat(conflicts).isOne();
         }
+    }
+
+    @Test
+    void heartbeatKeepsALongRunningExecutionLeased() {
+        var fixture = approvedFixture();
+        var created = executions.create(
+                fixture.incidentId(),
+                fixture.proposalId(),
+                3,
+                "heartbeat-lease-create-" + fixture.proposalId(),
+                fixture.operator());
+        var claim = executions.claim(created.id(), "executor-with-heartbeat");
+
+        var heartbeat = executions.heartbeat(
+                created.id(),
+                "executor-with-heartbeat",
+                claim.fencingToken(),
+                claim.ticket());
+        var secondHeartbeat = executions.heartbeat(
+                created.id(),
+                "executor-with-heartbeat",
+                claim.fencingToken(),
+                heartbeat.ticket());
+
+        assertThat(heartbeat.leaseUntil()).isAfter(claim.leaseUntil());
+        assertThat(heartbeat.ticket()).isNotBlank().isNotEqualTo(claim.ticket());
+        assertThat(secondHeartbeat.ticket())
+                .isNotBlank()
+                .isNotEqualTo(heartbeat.ticket());
+        assertThatThrownBy(() -> executions.heartbeat(
+                        created.id(),
+                        "executor-with-heartbeat",
+                        claim.fencingToken(),
+                        claim.ticket()))
+                .isInstanceOfSatisfying(ApiProblemException.class,
+                        problem -> assertThat(problem.errorCode())
+                                .isEqualTo("STALE_FENCING_TOKEN"));
+        assertThatThrownBy(() -> executions.claim(created.id(), "executor-reclaimer"))
+                .isInstanceOfSatisfying(ApiProblemException.class,
+                        problem -> assertThat(problem.errorCode())
+                                .isEqualTo("execution_lease_active"));
+    }
+
+    @Test
+    void retryingAnActiveLeaseConflictCannotRecoverAnotherDeliverysTicket() {
+        var fixture = approvedFixture();
+        var created = executions.create(
+                fixture.incidentId(),
+                fixture.proposalId(),
+                3,
+                "active-lease-retry-create-" + fixture.proposalId(),
+                fixture.operator());
+        String executorId = "shared-executor-identity";
+        executions.claim(created.id(), executorId);
+        String principalKey = "https://issuer.sentinelops.test\u001f" + executorId;
+        String redeliveryKey = "active-redelivery-" + created.id();
+
+        assertThatThrownBy(() -> executions.claim(
+                        created.id(), executorId, principalKey, redeliveryKey))
+                .isInstanceOfSatisfying(ApiProblemException.class,
+                        problem -> assertThat(problem.errorCode())
+                                .isEqualTo("execution_lease_active"));
+        jdbc.sql("""
+                        update idempotency_record
+                        set state = 'started', response_status = null, response_body = null
+                        where principal_key = :principalKey
+                          and route_key = 'POST:/internal/v1/executions/{id}:claim'
+                          and idempotency_key = :idempotencyKey
+                        """)
+                .param("principalKey", principalKey)
+                .param("idempotencyKey", redeliveryKey)
+                .update();
+
+        assertThatThrownBy(() -> executions.claim(
+                        created.id(), executorId, principalKey, redeliveryKey))
+                .isInstanceOfSatisfying(ApiProblemException.class,
+                        problem -> assertThat(problem.errorCode())
+                                .isEqualTo("execution_lease_active"));
     }
 
     @Test
@@ -246,6 +336,39 @@ class ExecutionClaimIT extends ExecutionFixtureSupport {
                         .query(String.class)
                         .single())
                 .isEqualTo("verifying");
+    }
+
+    @Test
+    void completionCannotChangeTheSignedStepOrAdapter() {
+        var fixture = approvedFixture();
+        var created = executions.create(
+                fixture.incidentId(),
+                fixture.proposalId(),
+                3,
+                "signed-step-create-" + fixture.proposalId(),
+                fixture.operator());
+        var claim = executions.claim(created.id(), "executor-signed-step");
+        var tampered = new CompletionCommand(
+                "different-step",
+                1,
+                "different-adapter",
+                "1.0.0",
+                "tampered-request",
+                Map.of("changed", true));
+
+        assertThatThrownBy(() -> executions.complete(
+                        created.id(),
+                        "executor-signed-step",
+                        claim.fencingToken(),
+                        claim.ticket(),
+                        tampered))
+                .isInstanceOf(InvalidExecutionTicket.class);
+        assertThat(jdbc.sql("select count(*) from execution_attempt where execution_id = :id")
+                        .param("id", created.id())
+                        .query(Integer.class)
+                        .single())
+                .isZero();
+        assertThat(executionStatus(created.id())).isEqualTo("running");
     }
 
     @Test

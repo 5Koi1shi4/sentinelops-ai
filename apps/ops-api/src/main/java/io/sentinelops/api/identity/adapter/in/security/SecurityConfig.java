@@ -62,14 +62,11 @@ public class SecurityConfig {
             @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
                     String jwkSetUri,
             @Value("${sentinelops.security.issuer}") String issuer,
-            @Value("${sentinelops.security.audience}") String audience,
-            @Value("${sentinelops.security.executor-audience}") String executorAudience) {
+            @Value("${sentinelops.security.audience}") String audience) {
         var decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
         var audienceValidator = new JwtClaimValidator<java.util.Collection<String>>(
                 JwtClaimNames.AUD,
-                audiences -> audiences != null
-                        && (audiences.contains(audience)
-                                || audiences.contains(executorAudience)));
+                audiences -> audiences != null && audiences.contains(audience));
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(issuer), audienceValidator));
         return decoder;

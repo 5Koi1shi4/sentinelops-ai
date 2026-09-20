@@ -15,7 +15,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 class SentinelJwtAuthenticationConverterTest {
 
     private final SentinelJwtAuthenticationConverter converter =
-            new SentinelJwtAuthenticationConverter("sentinelops-api", "sentinelops-executor");
+            new SentinelJwtAuthenticationConverter("sentinelops-api");
 
     @Test
     void mapsPlatformRolesAndUsesSubjectAsPrincipalName() {
@@ -33,17 +33,17 @@ class SentinelJwtAuthenticationConverterTest {
     }
 
     @Test
-    void derivesInternalAuthorityOnlyFromExecutorRoleAndAudienceTogether() {
-        assertThat(converter.convert(jwt(
-                                List.of("sentinelops_executor"),
-                                List.of("sentinelops-executor"),
-                                List.of()))
-                        .getAuthorities())
-                .extracting("authority")
-                .contains(EXECUTOR_AUTHORITY);
+    void derivesInternalAuthorityOnlyFromExecutorRoleAndApiAudienceTogether() {
         assertThat(converter.convert(jwt(
                                 List.of("sentinelops_executor"),
                                 List.of("sentinelops-api"),
+                                List.of()))
+                        .getAuthorities())
+                .extracting("authority")
+                .contains(API_AUTHORITY, EXECUTOR_AUTHORITY);
+        assertThat(converter.convert(jwt(
+                                List.of("sentinelops_executor"),
+                                List.of("sentinelops-executor"),
                                 List.of()))
                         .getAuthorities())
                 .extracting("authority")
@@ -59,7 +59,7 @@ class SentinelJwtAuthenticationConverterTest {
 
     @Test
     void usesConfiguredAudienceNamesInsteadOfHardCodedDefaults() {
-        var configured = new SentinelJwtAuthenticationConverter("custom-api", "custom-executor");
+        var configured = new SentinelJwtAuthenticationConverter("custom-api");
 
         assertThat(configured.convert(jwt(
                                 List.of("on_call_operator"),
@@ -69,7 +69,7 @@ class SentinelJwtAuthenticationConverterTest {
                 .isEmpty();
         assertThat(configured.convert(jwt(
                                 List.of("on_call_operator", "sentinelops_executor"),
-                                List.of("custom-api", "custom-executor"),
+                                List.of("custom-api"),
                                 List.of()))
                         .getAuthorities())
                 .extracting("authority")

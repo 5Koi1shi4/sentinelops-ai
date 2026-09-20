@@ -38,5 +38,6 @@ public abstract class PostgresIntegrationTest {
         registry.add(
                 "sentinelops.security.issuer",
                 () -> "https://issuer.sentinelops.test");
+        registry.add("sentinelops.outbox.relay-enabled", () -> false);
     }
 }

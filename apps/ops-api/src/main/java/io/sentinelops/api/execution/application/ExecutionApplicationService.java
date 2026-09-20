@@ -101,7 +101,8 @@ public class ExecutionApplicationService {
     }
 
     public ClaimView claim(UUID executionId, String executorId) {
-        return signClaim(recoverClaimDraft(executionId, executorId));
+        return signClaim(claimDraft(
+                executionId, executorId, "direct:" + ids.generate()));
     }
 
     public ClaimView claim(
@@ -113,46 +114,59 @@ public class ExecutionApplicationService {
                 new IdempotencyService.Scope(principalKey, CLAIM_ROUTE),
                 idempotencyKey,
                 sha256(executionId + ":" + executorId),
-                () -> claimDraft(executionId, executorId),
-                () -> recoverClaimDraft(executionId, executorId),
-                draft -> new IdempotencyService.Response(
-                        HttpStatus.OK.value(), objectMapper.valueToTree(signClaim(draft))));
+                () -> claimDraft(executionId, executorId, idempotencyKey),
+                () -> recoverClaimDraft(executionId, executorId, idempotencyKey),
+                this::claimResponse);
+        if (response.status() != HttpStatus.OK.value()) {
+            throw problem(
+                    HttpStatus.valueOf(response.status()),
+                    response.body().path("errorCode").asString("execution_not_claimable"),
+                    response.body().path("detail").asString("The execution cannot be claimed."));
+        }
         return readResponse(response, ClaimView.class);
     }
 
-    private ClaimDraft claimDraft(UUID executionId, String executorId) {
+    private ClaimDraft claimDraft(
+            UUID executionId, String executorId, String claimAttemptKey) {
         Objects.requireNonNull(executionId, "executionId");
         executorId = requireText(executorId, "executorId");
         String ticketJti = ids.generate().toString();
-        var outcome = store.claim(executionId, executorId, ticketJti, ids.generate());
+        var outcome = store.claim(
+                executionId,
+                executorId,
+                ticketJti,
+                requireText(claimAttemptKey, "claimAttemptKey"),
+                ids.generate());
         if (outcome.lease() != null) {
             return ClaimDraft.claimed(outcome.lease());
+        }
+        if (outcome.activeLease()) {
+            return ClaimDraft.activeLeaseRejected();
         }
         return outcome.authorizationInvalidated()
                 ? ClaimDraft.invalidatedAuthorization()
                 : ClaimDraft.unavailable();
     }
 
-    private ClaimDraft recoverClaimDraft(UUID executionId, String executorId) {
-        return store.recoverClaim(executionId, requireText(executorId, "executorId"))
+    private ClaimDraft recoverClaimDraft(
+            UUID executionId, String executorId, String claimAttemptKey) {
+        return store.recoverClaim(
+                        executionId,
+                        requireText(executorId, "executorId"),
+                        requireText(claimAttemptKey, "claimAttemptKey"))
                 .map(ClaimDraft::claimed)
-                .orElseGet(() -> claimDraft(executionId, executorId));
+                .orElseGet(() -> claimDraft(executionId, executorId, claimAttemptKey));
     }
 
     private ClaimView signClaim(ClaimDraft draft) {
-        if (draft.lease() == null) {
-            if (draft.authorizationInvalidated()) {
-                throw problem(
-                        HttpStatus.CONFLICT,
-                        "execution_authorization_invalidated",
-                        "The execution authorization is no longer valid and was escalated.");
-            }
-            throw problem(
-                    HttpStatus.CONFLICT,
-                    "execution_not_claimable",
-                    "The execution is already leased or cannot be claimed.");
+        ClaimProblem rejection = claimProblem(draft);
+        if (rejection != null) {
+            throw problem(rejection.status(), rejection.code(), rejection.detail());
         }
-        var lease = draft.lease();
+        return signLease(draft.lease());
+    }
+
+    private ClaimView signLease(ExecutionStore.ClaimLease lease) {
         Instant issuedAt = lease.ticketIssuedAt();
         var claims = new ExecutionTicketClaims(
                 lease.ticketJti(),
@@ -166,6 +180,8 @@ public class ExecutionApplicationService {
                 lease.target(),
                 lease.risk(),
                 lease.adapterId(),
+                lease.stepId(),
+                lease.operation(),
                 lease.fencingToken(),
                 ticketIssuer,
                 List.of(ticketAudience),
@@ -179,6 +195,41 @@ public class ExecutionApplicationService {
                 ticketSigner.sign(claims));
     }
 
+    private IdempotencyService.Response claimResponse(ClaimDraft draft) {
+        ClaimProblem rejection = claimProblem(draft);
+        if (rejection != null) {
+            var body = objectMapper.createObjectNode()
+                    .put("errorCode", rejection.code())
+                    .put("detail", rejection.detail());
+            return new IdempotencyService.Response(rejection.status().value(), body);
+        }
+        return new IdempotencyService.Response(
+                HttpStatus.OK.value(), objectMapper.valueToTree(signClaim(draft)));
+    }
+
+    private ClaimProblem claimProblem(ClaimDraft draft) {
+        if (draft.lease() != null) {
+            return null;
+        }
+        if (draft.activeLease()) {
+            return new ClaimProblem(
+                    HttpStatus.CONFLICT,
+                    "execution_lease_active",
+                    "The execution currently has an active lease.");
+        }
+        if (draft.authorizationInvalidated()) {
+            return new ClaimProblem(
+                    HttpStatus.CONFLICT,
+                    "execution_authorization_invalidated",
+                    "The execution authorization is no longer valid and was escalated.");
+        }
+        return new ClaimProblem(
+                HttpStatus.CONFLICT,
+                "execution_not_claimable",
+                "The execution cannot be claimed from its current state.");
+    }
+
+    @Transactional
     public HeartbeatView heartbeat(
             UUID executionId,
             String executorId,
@@ -188,14 +239,15 @@ public class ExecutionApplicationService {
             throw new IllegalArgumentException("fencingToken must be positive");
         }
         var verifiedTicket = verifyTicket(executionTicket, executionId, fencingToken);
-        var leaseUntil = store.heartbeat(
+        var renewedLease = store.heartbeat(
                         executionId,
                         requireText(executorId, "executorId"),
                         fencingToken,
                         verifiedTicket.jti(),
+                        ids.generate().toString(),
                         verifiedTicket.runbookChecksum())
                 .orElseThrow(this::staleFencingToken);
-        return new HeartbeatView(executionId, fencingToken, leaseUntil);
+        return heartbeatView(renewedLease);
     }
 
     public HeartbeatView heartbeat(
@@ -229,14 +281,24 @@ public class ExecutionApplicationService {
             String executorId,
             long fencingToken,
             VerifiedTicket verifiedTicket) {
-        var leaseUntil = store.heartbeat(
+        var renewedLease = store.heartbeat(
                         executionId,
                         requireText(executorId, "executorId"),
                         fencingToken,
                         verifiedTicket.jti(),
+                        ids.generate().toString(),
                         verifiedTicket.runbookChecksum())
                 .orElseThrow(this::staleFencingToken);
-        return new HeartbeatView(executionId, fencingToken, leaseUntil);
+        return heartbeatView(renewedLease);
+    }
+
+    private HeartbeatView heartbeatView(ExecutionStore.ClaimLease renewedLease) {
+        var signed = signLease(renewedLease);
+        return new HeartbeatView(
+                signed.executionId(),
+                signed.fencingToken(),
+                signed.leaseUntil(),
+                signed.ticket());
     }
 
     @Transactional
@@ -510,6 +572,11 @@ public class ExecutionApplicationService {
                         "The execution does not exist."));
         Instant databaseNow = store.databaseTime();
         validateLease(lease, executorId, fencingToken, verifiedTicket, databaseNow);
+        if (!command.stepId().equals(verifiedTicket.stepId())
+                || !command.adapterId().equals(verifiedTicket.adapterId())) {
+            throw new InvalidExecutionTicket(
+                    "Execution result step or adapter does not match the signed ticket");
+        }
         store.insertAttempt(
                 ids.generate(),
                 executionId,
@@ -635,23 +702,32 @@ public class ExecutionApplicationService {
     public record ClaimView(
             UUID executionId, long fencingToken, Instant leaseUntil, String ticket) {}
 
-    public record HeartbeatView(UUID executionId, long fencingToken, Instant leaseUntil) {}
+    public record HeartbeatView(
+            UUID executionId, long fencingToken, Instant leaseUntil, String ticket) {}
 
     private record ClaimDraft(
-            ExecutionStore.ClaimLease lease, boolean authorizationInvalidated) {
+            ExecutionStore.ClaimLease lease,
+            boolean authorizationInvalidated,
+            boolean activeLease) {
 
         private static ClaimDraft claimed(ExecutionStore.ClaimLease lease) {
-            return new ClaimDraft(lease, false);
+            return new ClaimDraft(lease, false, false);
         }
 
         private static ClaimDraft invalidatedAuthorization() {
-            return new ClaimDraft(null, true);
+            return new ClaimDraft(null, true, false);
+        }
+
+        private static ClaimDraft activeLeaseRejected() {
+            return new ClaimDraft(null, false, true);
         }
 
         private static ClaimDraft unavailable() {
-            return new ClaimDraft(null, false);
+            return new ClaimDraft(null, false, false);
         }
     }
+
+    private record ClaimProblem(HttpStatus status, String code, String detail) {}
 
     public record CompletionCommand(
             String stepId,

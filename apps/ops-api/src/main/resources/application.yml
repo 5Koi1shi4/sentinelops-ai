@@ -21,15 +21,30 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${SENTINELOPS_OIDC_JWK_SET_URI}
+  data:
+    redis:
+      host: ${SENTINELOPS_VALKEY_HOST:localhost}
+      port: ${SENTINELOPS_VALKEY_PORT:6379}
+      connect-timeout: 2s
+      timeout: 2s
 
 sentinelops:
   security:
     issuer: ${SENTINELOPS_OIDC_ISSUER}
     audience: sentinelops-api
-    executor-audience: sentinelops-executor
   execution-ticket:
     issuer: urn:sentinelops:ops-api
     audience: sentinelops-executor
+  outbox:
+    stream: sentinelops.executions
+    relay-id: ${HOSTNAME:}
+    relay-enabled: ${SENTINELOPS_OUTBOX_RELAY_ENABLED:true}
+    relay-interval: 1s
+    batch-size: 50
+    max-error-length: 512
+    retry-base-delay: 1s
+    retry-max-delay: 5m
+    max-publish-attempts: 20
 
 management:
   endpoint:

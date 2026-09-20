@@ -19,6 +19,8 @@ public record ExecutionTicketClaims(
         String target,
         RiskLevel risk,
         String adapterId,
+        String stepId,
+        String operation,
         long fencingToken,
         String issuer,
         List<String> audience,
@@ -38,6 +40,8 @@ public record ExecutionTicketClaims(
         target = requireText(target, "target");
         Objects.requireNonNull(risk, "risk");
         adapterId = requireText(adapterId, "adapterId");
+        stepId = requireText(stepId, "stepId");
+        operation = requireText(operation, "operation");
         if (fencingToken <= 0) {
             throw new IllegalArgumentException("fencingToken must be positive");
         }

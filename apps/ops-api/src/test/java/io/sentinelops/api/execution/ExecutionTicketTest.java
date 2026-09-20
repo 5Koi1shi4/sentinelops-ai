@@ -48,6 +48,8 @@ class ExecutionTicketTest {
                 "demo-checkout",
                 RiskLevel.R1,
                 "demo-http",
+                "recover-one",
+                "recover_connection_pool",
                 7,
                 "urn:sentinelops:ops-api",
                 List.of("sentinelops-executor"),
@@ -63,6 +65,10 @@ class ExecutionTicketTest {
         assertThat(parsed.getJWTClaimsSet().getStringClaim("runbook_checksum"))
                 .isEqualTo("checksum-v1");
         assertThat(parsed.getJWTClaimsSet().getLongClaim("fencing_token")).isEqualTo(7);
+        assertThat(parsed.getJWTClaimsSet().getStringClaim("step_id"))
+                .isEqualTo("recover-one");
+        assertThat(parsed.getJWTClaimsSet().getStringClaim("operation"))
+                .isEqualTo("recover_connection_pool");
         var verified = signer.verify(
                 token,
                 "urn:sentinelops:ops-api",

@@ -65,6 +65,8 @@ public final class NimbusExecutionTicketSigner
                 .claim("target", claims.target())
                 .claim("risk", claims.risk().name())
                 .claim("adapter_id", claims.adapterId())
+                .claim("step_id", claims.stepId())
+                .claim("operation", claims.operation())
                 .claim("fencing_token", claims.fencingToken())
                 .build();
         var token = new SignedJWT(header, body);
@@ -119,7 +121,16 @@ public final class NimbusExecutionTicketSigner
             }
             String checksum = required(
                     claims.getStringClaim("runbook_checksum"), "runbook_checksum");
-            return new VerifiedTicket(jti, executionId, fencingToken, checksum, expiresAt);
+            String stepId = required(claims.getStringClaim("step_id"), "step_id");
+            String adapterId = required(claims.getStringClaim("adapter_id"), "adapter_id");
+            return new VerifiedTicket(
+                    jti,
+                    executionId,
+                    fencingToken,
+                    checksum,
+                    stepId,
+                    adapterId,
+                    expiresAt);
         } catch (InvalidExecutionTicket failure) {
             throw failure;
         } catch (ParseException | JOSEException | IllegalArgumentException failure) {

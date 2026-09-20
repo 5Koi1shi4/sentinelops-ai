@@ -13,5 +13,7 @@ public interface ExecutionTicketVerifier {
             UUID executionId,
             long fencingToken,
             String runbookChecksum,
+            String stepId,
+            String adapterId,
             Instant expiresAt) {}
 }

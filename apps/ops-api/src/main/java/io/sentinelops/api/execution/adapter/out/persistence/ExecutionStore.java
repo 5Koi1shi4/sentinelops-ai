@@ -201,6 +201,7 @@ public class ExecutionStore {
             UUID executionId,
             String executorId,
             String ticketJti,
+            String claimAttemptKey,
             UUID invalidationEventId) {
         var claimed = jdbc.sql("""
                         with locked_incident as materialized (
@@ -218,6 +219,7 @@ public class ExecutionStore {
                             lease_until = clock_timestamp() + interval '30 seconds',
                             fencing_token = fencing_token + 1,
                             ticket_jti = :ticketJti,
+                            claim_attempt_key = :claimAttemptKey,
                             ticket_issued_at = clock_timestamp(),
                             started_at = coalesce(started_at, clock_timestamp()),
                             updated_at = clock_timestamp()
@@ -243,6 +245,8 @@ public class ExecutionStore {
                                   e.fencing_token, e.lease_until,
                                   rv.runbook_id, p.runbook_version_id,
                                   rv.definition_checksum, rv.adapter_id,
+                                  rv.definition #>> '{steps,0,stepId}' as step_id,
+                                  rv.definition #>> '{steps,0,operation}' as operation,
                                   p.proposal_payload -> 'parameters' as parameters,
                                   e.target_alias as target,
                                   p.risk_level
@@ -250,6 +254,7 @@ public class ExecutionStore {
                 .param("executorId", executorId)
                 .param("executionId", executionId)
                 .param("ticketJti", ticketJti)
+                .param("claimAttemptKey", claimAttemptKey)
                 .query(this::mapClaimLease)
                 .optional();
         if (claimed.isPresent()) {
@@ -261,6 +266,9 @@ public class ExecutionStore {
             return ClaimOutcome.unavailable();
         }
         var locked = context.orElseThrow();
+        if (leaseIsActive(locked)) {
+            return ClaimOutcome.activeLeaseRejected();
+        }
         String invalidationReason = authorizationInvalidationReason(locked);
         if (invalidationReason == null) {
             return ClaimOutcome.unavailable();
@@ -404,8 +412,15 @@ public class ExecutionStore {
                         && context.leaseUntil().isBefore(context.databaseNow()));
     }
 
+    private boolean leaseIsActive(ClaimContext context) {
+        return context.executionStatus() == ExecutionStatus.RUNNING
+                && context.leaseUntil() != null
+                && !context.leaseUntil().isBefore(context.databaseNow());
+    }
+
     @Transactional
-    public Optional<ClaimLease> recoverClaim(UUID executionId, String executorId) {
+    public Optional<ClaimLease> recoverClaim(
+            UUID executionId, String executorId, String claimAttemptKey) {
         var incidentId = jdbc.sql("select incident_id from execution where id = :executionId")
                 .param("executionId", executionId)
                 .query(UUID.class)
@@ -431,6 +446,8 @@ public class ExecutionStore {
                                e.fencing_token, e.lease_until,
                                rv.runbook_id, p.runbook_version_id,
                                rv.definition_checksum, rv.adapter_id,
+                               rv.definition #>> '{steps,0,stepId}' as step_id,
+                               rv.definition #>> '{steps,0,operation}' as operation,
                                p.proposal_payload -> 'parameters' as parameters,
                                e.target_alias as target, p.risk_level
                         from execution e
@@ -440,6 +457,7 @@ public class ExecutionStore {
                         where e.id = :executionId
                           and e.status = 'running'
                           and e.claimed_by = :executorId
+                          and e.claim_attempt_key = :claimAttemptKey
                           and e.lease_until > clock_timestamp()
                           and e.ticket_jti is not null
                           and e.ticket_issued_at is not null
@@ -449,19 +467,23 @@ public class ExecutionStore {
                         """)
                 .param("executionId", executionId)
                 .param("executorId", executorId)
+                .param("claimAttemptKey", claimAttemptKey)
                 .query(this::mapClaimLease)
                 .optional();
     }
 
-    public Optional<Instant> heartbeat(
+    public Optional<ClaimLease> heartbeat(
             UUID executionId,
             String executorId,
             long fencingToken,
             String ticketJti,
+            String newTicketJti,
             String runbookChecksum) {
         return jdbc.sql("""
                         update execution e
                         set lease_until = clock_timestamp() + interval '30 seconds',
+                            ticket_jti = :newTicketJti,
+                            ticket_issued_at = clock_timestamp(),
                             updated_at = clock_timestamp()
                         from diagnosis_proposal p,
                              runbook_version rv
@@ -474,16 +496,25 @@ public class ExecutionStore {
                           and p.id = e.proposal_id
                           and rv.id = p.runbook_version_id
                           and rv.definition_checksum = :runbookChecksum
-                        returning e.lease_until
+                        returning e.id, e.incident_id, e.proposal_id,
+                                  e.ticket_jti, e.ticket_issued_at,
+                                  e.fencing_token, e.lease_until,
+                                  rv.runbook_id, p.runbook_version_id,
+                                  rv.definition_checksum, rv.adapter_id,
+                                  rv.definition #>> '{steps,0,stepId}' as step_id,
+                                  rv.definition #>> '{steps,0,operation}' as operation,
+                                  p.proposal_payload -> 'parameters' as parameters,
+                                  e.target_alias as target,
+                                  p.risk_level
                         """)
                 .param("executionId", executionId)
                 .param("executorId", executorId)
                 .param("fencingToken", fencingToken)
                 .param("ticketJti", ticketJti)
+                .param("newTicketJti", newTicketJti)
                 .param("runbookChecksum", runbookChecksum)
-                .query(OffsetDateTime.class)
-                .optional()
-                .map(OffsetDateTime::toInstant);
+                .query(this::mapClaimLease)
+                .optional();
     }
 
     public Optional<LeaseSnapshot> lockLease(UUID executionId) {
@@ -639,6 +670,8 @@ public class ExecutionStore {
                 resultSet.getString("target"),
                 RiskLevel.fromDatabase(resultSet.getString("risk_level")),
                 resultSet.getString("adapter_id"),
+                resultSet.getString("step_id"),
+                resultSet.getString("operation"),
                 resultSet.getLong("fencing_token"),
                 resultSet.getObject("lease_until", OffsetDateTime.class).toInstant(),
                 resultSet.getString("ticket_jti"),
@@ -713,23 +746,30 @@ public class ExecutionStore {
             String target,
             RiskLevel risk,
             String adapterId,
+            String stepId,
+            String operation,
             long fencingToken,
             Instant leaseUntil,
             String ticketJti,
             Instant ticketIssuedAt) {}
 
-    public record ClaimOutcome(ClaimLease lease, boolean authorizationInvalidated) {
+    public record ClaimOutcome(
+            ClaimLease lease, boolean authorizationInvalidated, boolean activeLease) {
 
         private static ClaimOutcome claimed(ClaimLease lease) {
-            return new ClaimOutcome(lease, false);
+            return new ClaimOutcome(lease, false, false);
         }
 
         private static ClaimOutcome invalidatedAuthorization() {
-            return new ClaimOutcome(null, true);
+            return new ClaimOutcome(null, true, false);
+        }
+
+        private static ClaimOutcome activeLeaseRejected() {
+            return new ClaimOutcome(null, false, true);
         }
 
         private static ClaimOutcome unavailable() {
-            return new ClaimOutcome(null, false);
+            return new ClaimOutcome(null, false, false);
         }
     }
 
