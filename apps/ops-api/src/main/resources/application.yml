@@ -16,3 +16,20 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${SENTINELOPS_OIDC_JWK_SET_URI}
+
+sentinelops:
+  security:
+    issuer: ${SENTINELOPS_OIDC_ISSUER}
+    audience: sentinelops-api
+    executor-audience: sentinelops-executor
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true

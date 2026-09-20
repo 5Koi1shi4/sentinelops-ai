@@ -8,6 +8,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthenticationConverter.API_AUTHORITY;
 
 import io.sentinelops.api.diagnosis.application.DiagnosisEngine;
 import io.sentinelops.api.diagnosis.domain.DiagnosisProposal;
@@ -33,7 +36,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.context.WebApplicationContext;
@@ -51,7 +56,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
 
     @BeforeEach
     void configureMockMvc() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .apply(springSecurity())
+                .build();
     }
 
     @Test
@@ -80,9 +87,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
                 "log-" + suffix);
 
         var firstResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
-                        .header("Idempotency-Key", "diagnose-" + suffix)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", "diagnose-" + suffix))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.riskLevel").value("R1"))
                 .andReturn();
@@ -102,9 +109,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(diagnosisEventCount(incident.id())).isEqualTo(2);
 
         var replayResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
-                        .header("Idempotency-Key", "diagnose-" + suffix)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", "diagnose-" + suffix))
                 .andExpect(status().isCreated())
                 .andReturn();
 
@@ -114,7 +121,8 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(proposalCount(incident.id())).isOne();
         assertThat(diagnosisEventCount(incident.id())).isEqualTo(2);
 
-        mockMvc.perform(get("/api/v1/incidents/{id}/evidence", incident.id()))
+        mockMvc.perform(get("/api/v1/incidents/{id}/evidence", incident.id())
+                        .with(operator(incident.serviceId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].redactedPayload").exists())
                 .andExpect(jsonPath("$[0].sourceRef").exists())
@@ -158,9 +166,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         doReturn(invalidDraft).when(diagnosisEngine).diagnose(any());
 
         var failureResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
-                        .header("Idempotency-Key", "invalid-diagnosis-" + suffix)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", "invalid-diagnosis-" + suffix))
                 .andExpect(status().is(422))
                 .andExpect(jsonPath("$.errorCode").value("EVIDENCE_REFERENCE_UNKNOWN"))
                 .andReturn();
@@ -174,9 +182,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(lastDiagnosisEvent(incident.id())).isEqualTo("diagnosis_validation_failed");
 
         var failureReplay = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
-                        .header("Idempotency-Key", "invalid-diagnosis-" + suffix)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", "invalid-diagnosis-" + suffix))
                 .andExpect(status().is(422))
                 .andReturn();
         var firstFailureBody = objectMapper.readTree(
@@ -199,9 +207,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         doCallRealMethod().when(diagnosisEngine).diagnose(any());
 
         var retryResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"1\"")
-                        .header("Idempotency-Key", "retry-diagnosis-" + suffix)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", "retry-diagnosis-" + suffix))
                 .andExpect(status().isCreated())
                 .andReturn();
         var retriedProposal = objectMapper.readValue(
@@ -233,9 +241,9 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         String idempotencyKey = "stale-diagnosis-" + suffix;
 
         mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
+                        .with(operator(incident.serviceId()))
                         .header(HttpHeaders.IF_MATCH, "\"1\"")
-                        .header("Idempotency-Key", idempotencyKey)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", idempotencyKey))
                 .andExpect(status().isPreconditionFailed())
                 .andExpect(jsonPath("$.errorCode").value("stale_resource_version"));
 
@@ -307,12 +315,33 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
             throw new IllegalStateException("timed out waiting to start diagnosis request");
         }
         return mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incidentId)
+                        .with(operator(serviceId(incidentId)))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
-                        .header("Idempotency-Key", idempotencyKey)
-                        .header("X-SentinelOps-Principal", "demo-author"))
+                        .header("Idempotency-Key", idempotencyKey))
                 .andReturn()
                 .getResponse()
                 .getStatus();
+    }
+
+    private RequestPostProcessor operator(UUID serviceId) {
+        return jwt().authorities(
+                        new SimpleGrantedAuthority(API_AUTHORITY),
+                        new SimpleGrantedAuthority("ROLE_ON_CALL_OPERATOR"))
+                .jwt(token -> token
+                        .issuer("https://issuer.sentinelops.test")
+                        .subject("diagnosis-test-operator")
+                        .audience(List.of("sentinelops-api"))
+                        .claim(
+                                "realm_access",
+                                Map.of("roles", List.of("on_call_operator")))
+                        .claim("service_ids", List.of(serviceId.toString())));
+    }
+
+    private UUID serviceId(UUID incidentId) {
+        return jdbc.sql("select service_id from incident where id = :incidentId")
+                .param("incidentId", incidentId)
+                .query(UUID.class)
+                .single();
     }
 
     private UUID insertEvidence(

@@ -7,6 +7,8 @@ import io.sentinelops.api.diagnosis.domain.InvalidProposalException;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
+import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.knowledge.application.RunbookCatalog;
 import io.sentinelops.api.shared.id.UuidV7Generator;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
@@ -63,15 +65,16 @@ public class DiagnosisApplicationService {
             UUID incidentId,
             long expectedVersion,
             String idempotencyKey,
-            String principalKey) {
+            CurrentPrincipal principal,
+            UUID principalId) {
         if (expectedVersion < 0) {
             throw new IllegalArgumentException("If-Match version must not be negative");
         }
         var response = idempotency.execute(
-                new IdempotencyService.Scope(principalKey, ROUTE_KEY),
+                new IdempotencyService.Scope(principal.principalKey(), ROUTE_KEY),
                 idempotencyKey,
                 requestHash(incidentId, expectedVersion),
-                () -> runDiagnosis(incidentId, expectedVersion, principalKey));
+                () -> runDiagnosis(incidentId, expectedVersion, principal, principalId));
 
         if (response.status() != HttpStatus.CREATED.value()) {
             throw new ApiProblemException(
@@ -84,9 +87,13 @@ public class DiagnosisApplicationService {
     }
 
     private IdempotencyService.Response runDiagnosis(
-            UUID incidentId, long expectedVersion, String principalKey) {
+            UUID incidentId,
+            long expectedVersion,
+            CurrentPrincipal principal,
+            UUID principalId) {
         var incident = store.lockIncident(incidentId).orElseThrow(() -> new ApiProblemException(
                 HttpStatus.NOT_FOUND, "incident_not_found", "The incident does not exist."));
+        authorize(principal, incident.serviceId());
         if (incident.version() != expectedVersion) {
             throw new OptimisticLockingFailureException("Incident version does not match If-Match");
         }
@@ -116,7 +123,7 @@ public class DiagnosisApplicationService {
                 incidentId,
                 startSequence,
                 "diagnosis_started",
-                principalKey,
+                principal.subject(),
                 objectMapper.writeValueAsString(objectMapper.createObjectNode()
                         .put("expectedIncidentVersion", expectedVersion)),
                 now);
@@ -124,10 +131,6 @@ public class DiagnosisApplicationService {
         var evidence = store.findEvidence(incidentId);
         var context = new DiagnosisContext(
                 incidentId, expectedVersion, incident.serviceId(), evidence);
-        UUID principalId = store.findPrincipalId(principalKey).orElseThrow(() -> new ApiProblemException(
-                HttpStatus.UNAUTHORIZED,
-                "principal_not_registered",
-                "The requesting principal is not registered."));
         UUID runId = ids.generate();
         store.insertRun(
                 runId,
@@ -176,7 +179,7 @@ public class DiagnosisApplicationService {
                     incidentId,
                     diagnosed.sequence(),
                     "diagnosis_succeeded",
-                    principalKey,
+                    principal.subject(),
                     objectMapper.writeValueAsString(eventPayload),
                     createdAt);
             store.appendOutboxEvent(
@@ -204,7 +207,18 @@ public class DiagnosisApplicationService {
                     HttpStatus.CREATED.value(), objectMapper.valueToTree(proposal));
         } catch (InvalidProposalException failure) {
             return recordValidationFailure(
-                    incidentId, runId, principalKey, failure, time.now());
+                    incidentId, runId, principal.subject(), failure, time.now());
+        }
+    }
+
+    private void authorize(CurrentPrincipal principal, UUID serviceId) {
+        if (!principal.hasAnyRole(
+                        PlatformRole.ON_CALL_OPERATOR, PlatformRole.PLATFORM_ADMIN)
+                || !principal.canAccess(serviceId)) {
+            throw new ApiProblemException(
+                    HttpStatus.FORBIDDEN,
+                    "access_denied",
+                    "The principal cannot diagnose incidents for this service.");
         }
     }
 

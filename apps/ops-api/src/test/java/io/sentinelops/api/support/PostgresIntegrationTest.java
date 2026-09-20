@@ -30,5 +30,11 @@ public abstract class PostgresIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add(
+                "spring.security.oauth2.resourceserver.jwt.jwk-set-uri",
+                () -> "http://localhost.invalid/sentinelops-test-jwks");
+        registry.add(
+                "sentinelops.security.issuer",
+                () -> "https://issuer.sentinelops.test");
     }
 }
