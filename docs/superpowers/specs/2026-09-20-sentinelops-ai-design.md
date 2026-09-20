@@ -365,6 +365,7 @@ Redis 只是唤醒通道。消息允许重复或延迟，所有最终判断由 P
 | GET | `/api/v1/incidents/{id}/timeline` | 只追加时间线 |
 | GET | `/api/v1/incidents/{id}/evidence` | 授权范围内的脱敏证据 |
 | POST | `/api/v1/incidents/{id}/diagnosis-runs` | 对固定事故版本启动诊断 |
+| POST | `/api/v1/incidents/{id}/approval-requests` | 将固定 proposal 提交审批，需幂等键和资源版本 |
 | POST | `/api/v1/approval-requests/{id}/decisions` | 批准或拒绝，需幂等键和资源版本 |
 | POST | `/api/v1/incidents/{id}/executions` | 对已获批 proposal 请求 execution |
 | POST | `/api/v1/incidents/{id}/resolve` | 人工关闭时仍需理由和状态校验 |
@@ -698,4 +699,3 @@ Demo 验收命令通过后直接继续：
 - [OpenAI：How enterprises put AI to work](https://openai.com/index/how-enterprises-put-ai-to-work/)
 - [World Economic Forum：AI agents evaluation and governance](https://www.weforum.org/publications/ai-agents-in-action-foundations-for-evaluation-and-governance/)
 - [Microsoft Work Trend Index 2026](https://www.microsoft.com/en-us/worklab/work-trend-index/agents-human-agency-and-the-opportunity-for-every-organization)
-
