@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinelops.local/contracts/webhooks/alertmanager.schema.json",
+  "title": "SentinelOps Alertmanager v4 webhook",
+  "type": "object",
+  "required": ["version", "status", "commonLabels", "alerts"],
+  "properties": {
+    "version": {
+      "const": "4"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "groupKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "status": {
+      "enum": ["firing", "resolved"]
+    },
+    "receiver": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "groupLabels": {
+      "$ref": "#/$defs/labels"
+    },
+    "commonLabels": {
+      "allOf": [
+        { "$ref": "#/$defs/labels" },
+        {
+          "required": ["service_key", "severity"],
+          "properties": {
+            "service_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "severity": {
+              "enum": ["sev1", "sev2", "sev3", "sev4"]
+            },
+            "incident_fingerprint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        }
+      ]
+    },
+    "commonAnnotations": {
+      "$ref": "#/$defs/annotations"
+    },
+    "externalURL": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048
+    },
+    "alerts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/alert"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "labels": {
+      "type": "object",
+      "maxProperties": 128,
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 2048
+      }
+    },
+    "annotations": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 8192
+      }
+    },
+    "alert": {
+      "type": "object",
+      "required": ["status", "labels"],
+      "properties": {
+        "status": {
+          "enum": ["firing", "resolved"]
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "startsAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endsAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "generatorURL": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

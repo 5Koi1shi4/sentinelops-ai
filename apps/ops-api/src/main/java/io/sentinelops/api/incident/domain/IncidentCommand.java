@@ -1,0 +1,15 @@
+package io.sentinelops.api.incident.domain;
+
+public enum IncidentCommand {
+    START_TRIAGE,
+    SUPPRESS,
+    RECORD_DIAGNOSIS,
+    REQUEST_MANUAL_VERIFICATION,
+    REQUEST_APPROVAL,
+    START_EXECUTION,
+    RECEIVE_RECOVERY_SIGNAL,
+    START_VERIFICATION,
+    CONFIRM_RECOVERY,
+    RETRY_TRIAGE,
+    ESCALATE
+}
