@@ -33,13 +33,15 @@ public class ApprovalStore {
     }
 
     private Optional<ProposalSnapshot> proposalIncident(UUID proposalId, boolean lockIncident) {
-        String locking = lockIncident ? " for update of i" : "";
+        String locking = lockIncident ? " for update of i, s" : "";
         return jdbc.sql("""
                         select p.id as proposal_id, p.incident_id, p.proposal_hash, p.risk_level,
                                i.service_id, i.status as incident_status,
-                               i.version as incident_version
+                               i.version as incident_version,
+                               nullif(btrim(s.execution_target_aliases ->> 'primary'), '') as target_alias
                         from diagnosis_proposal p
                         join incident i on i.id = p.incident_id
+                        join service_catalog s on s.id = i.service_id
                         where p.id = :proposalId
                         """ + locking)
                 .param("proposalId", proposalId)
@@ -49,7 +51,7 @@ public class ApprovalStore {
 
     public Optional<RequestSnapshot> lockRequest(UUID requestId) {
         return jdbc.sql("""
-                        select id, incident_id, proposal_id, proposal_hash,
+                        select id, incident_id, proposal_id, proposal_hash, target_alias,
                                requester_principal_id, required_approvals,
                                independent_approver_required, status, resource_version,
                                created_at, expires_at, decided_at
@@ -79,12 +81,12 @@ public class ApprovalStore {
             Instant expiresAt) {
         jdbc.sql("""
                         insert into approval_request(
-                          id, incident_id, proposal_id, proposal_hash,
+                          id, incident_id, proposal_id, proposal_hash, target_alias,
                           requester_principal_id, policy_version, required_approvals,
                           independent_approver_required, status, resource_version,
                           created_at, expires_at
                         ) values (
-                          :id, :incidentId, :proposalId, :proposalHash,
+                          :id, :incidentId, :proposalId, :proposalHash, :targetAlias,
                           :requesterId, 'stage1-v1', :requiredApprovals,
                           :independent, 'pending', 0, :createdAt, :expiresAt
                         )
@@ -93,6 +95,7 @@ public class ApprovalStore {
                 .param("incidentId", proposal.incidentId())
                 .param("proposalId", proposal.proposalId())
                 .param("proposalHash", proposal.proposalHash())
+                .param("targetAlias", proposal.targetAlias())
                 .param("requesterId", requesterId)
                 .param("requiredApprovals", requiredApprovals)
                 .param("independent", independentApproverRequired)
@@ -276,6 +279,7 @@ public class ApprovalStore {
                 resultSet.getObject("incident_id", UUID.class),
                 resultSet.getObject("service_id", UUID.class),
                 resultSet.getString("proposal_hash"),
+                resultSet.getString("target_alias"),
                 RiskLevel.fromDatabase(resultSet.getString("risk_level")),
                 IncidentStatus.fromDatabase(resultSet.getString("incident_status")),
                 resultSet.getLong("incident_version"));
@@ -288,6 +292,7 @@ public class ApprovalStore {
                 resultSet.getObject("incident_id", UUID.class),
                 resultSet.getObject("proposal_id", UUID.class),
                 resultSet.getString("proposal_hash"),
+                resultSet.getString("target_alias"),
                 resultSet.getObject("requester_principal_id", UUID.class),
                 resultSet.getInt("required_approvals"),
                 resultSet.getBoolean("independent_approver_required"),
@@ -307,6 +312,7 @@ public class ApprovalStore {
             UUID incidentId,
             UUID serviceId,
             String proposalHash,
+            String targetAlias,
             RiskLevel riskLevel,
             IncidentStatus incidentStatus,
             long incidentVersion) {}
@@ -316,6 +322,7 @@ public class ApprovalStore {
             UUID incidentId,
             UUID proposalId,
             String proposalHash,
+            String targetAlias,
             UUID requesterId,
             int requiredApprovals,
             boolean independentApproverRequired,

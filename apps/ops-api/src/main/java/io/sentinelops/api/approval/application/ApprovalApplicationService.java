@@ -124,6 +124,12 @@ public class ApprovalApplicationService {
                     "incident_not_awaiting_approval",
                     "Only a diagnosed incident can request approval.");
         }
+        if (proposal.targetAlias() == null || proposal.targetAlias().isBlank()) {
+            throw problem(
+                    HttpStatus.CONFLICT,
+                    "execution_target_missing",
+                    "The incident service has no execution target to bind to the approval.");
+        }
 
         var requirements = policy.requirements(proposal.riskLevel());
         Instant createdAt = store.databaseTime();
@@ -143,6 +149,7 @@ public class ApprovalApplicationService {
                 .put("approvalRequestId", requestId.toString())
                 .put("proposalId", proposal.proposalId().toString())
                 .put("proposalHash", proposal.proposalHash())
+                .put("targetAlias", proposal.targetAlias())
                 .put("requiredApprovals", requirements.requiredApprovals());
         store.appendIncidentEvent(
                 ids.generate(),
@@ -160,6 +167,7 @@ public class ApprovalApplicationService {
                         incidentId,
                         proposalId,
                         proposal.proposalHash(),
+                        proposal.targetAlias(),
                         ApprovalStatus.PENDING,
                         0,
                         requirements.requiredApprovals(),
@@ -232,6 +240,15 @@ public class ApprovalApplicationService {
                     context,
                     ApprovalStatus.INVALIDATED,
                     "proposal_hash_changed",
+                    databaseNow);
+        }
+        if (!request.targetAlias().equals(proposal.targetAlias())) {
+            return invalidate(
+                    request,
+                    proposal,
+                    context,
+                    ApprovalStatus.INVALIDATED,
+                    "execution_target_changed",
                     databaseNow);
         }
         if (!command.proposalHash().equals(proposal.proposalHash())) {
@@ -368,6 +385,7 @@ public class ApprovalApplicationService {
                 request.incidentId(),
                 request.proposalId(),
                 proposalHash,
+                request.targetAlias(),
                 status,
                 requestVersion,
                 request.requiredApprovals(),
@@ -461,6 +479,7 @@ public class ApprovalApplicationService {
             UUID incidentId,
             UUID proposalId,
             String proposalHash,
+            String targetAlias,
             ApprovalStatus status,
             long resourceVersion,
             int requiredApprovals,

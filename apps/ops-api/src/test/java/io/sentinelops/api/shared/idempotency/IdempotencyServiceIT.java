@@ -14,10 +14,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 class IdempotencyServiceIT extends PostgresIntegrationTest {
@@ -198,6 +200,47 @@ class IdempotencyServiceIT extends PostgresIntegrationTest {
                 () -> new IdempotencyService.Response(201, objectMapper.createObjectNode()));
         assertThat(retry.status()).isEqualTo(201);
         assertThat(recordCount("failed-action")).isOne();
+    }
+
+    @Test
+    void postCommitActionRunsAfterTheDatabaseTransactionAndReplaysItsResponse() {
+        var scope = new IdempotencyService.Scope("executor", "POST:/executions/{id}:claim");
+        var transactionalActionRan = new AtomicBoolean();
+        var postCommitActionRan = new AtomicBoolean();
+
+        var first = idempotency.executePostCommit(
+                scope,
+                "post-commit-command",
+                "request-A",
+                () -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                            .isTrue();
+                    transactionalActionRan.set(true);
+                    return "claim-draft";
+                },
+                draft -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                            .isFalse();
+                    assertThat(draft).isEqualTo("claim-draft");
+                    postCommitActionRan.set(true);
+                    return new IdempotencyService.Response(
+                            200, objectMapper.createObjectNode().put("ticket", "signed"));
+                });
+        var replay = idempotency.executePostCommit(
+                scope,
+                "post-commit-command",
+                "request-A",
+                () -> {
+                    throw new AssertionError("transactional action must not replay");
+                },
+                draft -> {
+                    throw new AssertionError("post-commit action must not replay");
+                });
+
+        assertThat(transactionalActionRan).isTrue();
+        assertThat(postCommitActionRan).isTrue();
+        assertThat(replay).isEqualTo(first);
+        assertThat(recordState("post-commit-command")).isEqualTo("completed");
     }
 
     private IdempotencyService.Response heldResponse(

@@ -27,7 +27,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
     ObjectMapper objectMapper;
 
     @Test
-    void createsCoreTablesAndIndexesAtVersionSeven() {
+    void createsCoreTablesAndIndexesAtVersionEight() {
         var tables = jdbc.sql("""
                         select table_name from information_schema.tables
                         where table_schema = 'public'
@@ -70,7 +70,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("7");
+        assertThat(currentVersion).isEqualTo("8");
     }
 
     @Test

@@ -148,6 +148,25 @@ public class IncidentStore {
                 incident.id(), target, incident.version(), incident.allocatedSequence());
     }
 
+    public int settleExecutionsForRecovery(UUID incidentId, Instant recoveredAt) {
+        return jdbc.sql("""
+                        update execution
+                        set status = case
+                              when status = 'pending' then 'verifying'
+                              else 'unknown'
+                            end,
+                            claimed_by = null,
+                            lease_until = null,
+                            completed_at = :recoveredAt,
+                            updated_at = :recoveredAt
+                        where incident_id = :incidentId
+                          and status in ('pending','running')
+                        """)
+                .param("incidentId", incidentId)
+                .param("recoveredAt", databaseTimestamp(recoveredAt))
+                .update();
+    }
+
     public void appendOutboxEvent(
             UUID eventId,
             UUID incidentId,

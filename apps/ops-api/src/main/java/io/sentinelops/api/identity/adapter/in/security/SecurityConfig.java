@@ -1,7 +1,7 @@
 package io.sentinelops.api.identity.adapter.in.security;
 
-import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthenticationConverter.EXECUTOR_AUTHORITY;
 import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthenticationConverter.API_AUTHORITY;
+import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthenticationConverter.EXECUTOR_AUTHORITY;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -45,6 +45,8 @@ public class SecurityConfig {
                     .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/approval-requests/*/decisions")
                     .hasAnyRole("SRE_APPROVER", "PLATFORM_ADMIN");
+            authorize.requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/executions")
+                    .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
             authorize.requestMatchers("/internal/**").hasAuthority(EXECUTOR_AUTHORITY);
             authorize.requestMatchers("/api/**").hasAuthority(API_AUTHORITY);
             authorize.anyRequest().denyAll();

@@ -170,6 +170,41 @@ class ApprovalConcurrencyIT extends PostgresIntegrationTest {
     }
 
     @Test
+    void changedExecutionTargetInvalidatesBeforeDecisionPersistence() {
+        var fixture = fixture(RiskLevel.R1);
+        var created = approvals.request(
+                fixture.incidentId(),
+                fixture.proposalId(),
+                2,
+                "request-target-" + fixture.incidentId(),
+                fixture.requester());
+        jdbc.sql("""
+                        update service_catalog
+                        set execution_target_aliases = '{"primary":"other-checkout"}'::jsonb
+                        where id = :serviceId
+                        """)
+                .param("serviceId", fixture.serviceId())
+                .update();
+
+        try {
+            assertThatThrownBy(() -> approvals.decide(
+                            created.id(),
+                            created.incidentVersion(),
+                            "target-decision-" + created.id(),
+                            new DecisionCommand(APPROVE, "stale target", fixture.proposalHash()),
+                            context("target-approver-" + created.id(), fixture.serviceId())))
+                    .isInstanceOfSatisfying(ApiProblemException.class,
+                            failure -> assertThat(failure.errorCode())
+                                    .isEqualTo("APPROVAL_INVALIDATED"));
+            assertThat(requestStatus(created.id())).isEqualTo(ApprovalStatus.INVALIDATED);
+            assertThat(decisionCount(created.id())).isZero();
+            assertThat(incidentStatus(fixture.incidentId())).isEqualTo(ESCALATED);
+        } finally {
+            restoreDemoTarget(fixture.serviceId());
+        }
+    }
+
+    @Test
     void callerSuppliedHashMismatchHasNoSideEffects() {
         var fixture = fixture(RiskLevel.R1);
         var created = approvals.request(
@@ -406,6 +441,16 @@ class ApprovalConcurrencyIT extends PostgresIntegrationTest {
                 .param("eventType", eventType)
                 .query(Integer.class)
                 .single();
+    }
+
+    private void restoreDemoTarget(UUID serviceId) {
+        jdbc.sql("""
+                        update service_catalog
+                        set execution_target_aliases = '{"primary":"demo-checkout"}'::jsonb
+                        where id = :serviceId
+                        """)
+                .param("serviceId", serviceId)
+                .update();
     }
 
     private record Fixture(

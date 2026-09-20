@@ -64,12 +64,17 @@ public class IncidentApplicationService {
                 "No registered service matches the alert service key."));
         var now = time.now();
         var allocated = store.upsertIncident(ids.generate(), serviceId, alert, now);
+        boolean recoveryDuringExecution = alert.status() == AlertEnvelope.AlertStatus.RESOLVED
+                && allocated.status() == IncidentStatus.EXECUTING;
         if (alert.status() == AlertEnvelope.AlertStatus.RESOLVED
                 && (allocated.status() == IncidentStatus.AWAITING_APPROVAL
                         || allocated.status() == IncidentStatus.EXECUTING)) {
             var target = IncidentStateMachine.next(
                     allocated.status(), IncidentCommand.RECEIVE_RECOVERY_SIGNAL);
             allocated = store.applyTransition(allocated, target, now);
+            if (recoveryDuringExecution) {
+                store.settleExecutionsForRecovery(allocated.id(), now);
+            }
         }
         var eventType = alert.status() == AlertEnvelope.AlertStatus.RESOLVED
                 ? "alert_recovered"

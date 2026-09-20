@@ -27,6 +27,9 @@ sentinelops:
     issuer: ${SENTINELOPS_OIDC_ISSUER}
     audience: sentinelops-api
     executor-audience: sentinelops-executor
+  execution-ticket:
+    issuer: urn:sentinelops:ops-api
+    audience: sentinelops-executor
 
 management:
   endpoint:
