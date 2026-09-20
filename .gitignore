@@ -1,2 +1,5 @@
 # Local agent instructions are never committed.
 /AGENTS.md
+
+# Repository-local isolated implementation worktrees.
+/.worktrees/
