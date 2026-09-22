@@ -111,6 +111,13 @@ public class EvalApplicationService {
         });
     }
 
+    public List<EvalRunSummary> list(UUID beforeId, int limit, CurrentPrincipal principal) {
+        authorize(principal);
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("Invalid Eval page size");
+        if (beforeId != null && beforeId.version() != 7) throw new IllegalArgumentException("beforeId must be a UUIDv7 cursor");
+        return store.summaries(beforeId, limit);
+    }
+
     private Claim claim(RunRequest request,String key,CurrentPrincipal principal,UUID principalId,
             EvalDatasetImporter.Dataset dataset,JsonNode config,java.util.concurrent.atomic.AtomicBoolean acquired) {
         UUID command=store.claimCommand(principal.principalKey(),key,ModelPayloadHash.hash(request));
@@ -225,5 +232,10 @@ public class EvalApplicationService {
     public record RunView(UUID id,String status,String provider,String modelName,UUID datasetId,String datasetChecksum,
                           JsonNode runConfig,JsonNode aggregateMetrics,Boolean releaseAllowed,Instant startedAt,Instant completedAt,
                           List<ResultView> results,Comparison comparison) {}
+    public record EvalRunSummary(UUID id,String status,String provider,String modelName,UUID datasetId,
+                                 Boolean releaseAllowed,Instant startedAt,Instant completedAt,JsonNode aggregateMetrics) {
+        public EvalRunSummary { aggregateMetrics=aggregateMetrics.deepCopy(); }
+        @Override public JsonNode aggregateMetrics() { return aggregateMetrics.deepCopy(); }
+    }
     private record Claim(UUID id,UUID dataset,UUID command,UUID owner,boolean fresh) {}
 }

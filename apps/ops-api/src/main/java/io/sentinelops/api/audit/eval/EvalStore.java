@@ -94,6 +94,28 @@ class EvalStore {
                 .optional().orElseThrow(()->problem(HttpStatus.NOT_FOUND,"EVAL_RUN_NOT_FOUND"));
     }
 
+    List<EvalApplicationService.EvalRunSummary> summaries(UUID beforeId, int limit) {
+        String cursor = beforeId == null ? "" : " where id<:beforeId";
+        var query = jdbc.sql("""
+                select id,status,provider,model_name,dataset_id,release_allowed,started_at,completed_at,
+                       aggregate_metrics::text metrics_json
+                from eval_run
+                %s
+                order by id desc
+                limit :limit
+                """.formatted(cursor)).param("limit", limit);
+        if (beforeId != null) query = query.param("beforeId", beforeId);
+        return query
+                .query((row, index) -> new EvalApplicationService.EvalRunSummary(
+                        row.getObject("id", UUID.class), row.getString("status"), row.getString("provider"),
+                        row.getString("model_name"), row.getObject("dataset_id", UUID.class),
+                        row.getObject("release_allowed", Boolean.class),
+                        row.getObject("started_at", OffsetDateTime.class).toInstant(),
+                        row.getObject("completed_at", OffsetDateTime.class) == null ? null
+                                : row.getObject("completed_at", OffsetDateTime.class).toInstant(),
+                        mapper.readTree(row.getString("metrics_json")))).list();
+    }
+
     boolean renew(UUID id,UUID owner) {
         return jdbc.sql("""
                 update eval_run set lease_expires_at=least(deadline_at,clock_timestamp()+interval '120 seconds')

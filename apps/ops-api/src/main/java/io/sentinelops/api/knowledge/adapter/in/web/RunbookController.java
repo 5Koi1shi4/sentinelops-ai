@@ -20,6 +20,12 @@ public class RunbookController {
     private final RunbookApplicationService runbooks;
     public RunbookController(RunbookApplicationService runbooks) { this.runbooks = runbooks; }
 
+    @GetMapping("/runbooks")
+    List<RunbookSummary> list(@RequestParam(required = false) String afterKey,
+            @RequestParam(defaultValue = "50") int limit, @AuthenticationPrincipal Jwt jwt) {
+        return runbooks.list(afterKey, limit, CurrentPrincipal.from(jwt));
+    }
+
     @PostMapping("/runbooks/{key}/versions")
     ResponseEntity<VersionView> create(@PathVariable String key, @RequestBody JsonNode body,
             @RequestHeader("Idempotency-Key") String command, @AuthenticationPrincipal Jwt jwt) {

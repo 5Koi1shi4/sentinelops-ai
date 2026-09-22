@@ -88,6 +88,79 @@ class RunbookHttpIT extends PostgresIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test void governanceReadsExposeReviewEligibilityAndOnlyPublishedVersionsToObservers() throws Exception {
+        String key = "RB-QUERY-" + UUID.randomUUID();
+        String newReviewer = "first-review-" + UUID.randomUUID();
+        var governanceBody = body(key).put("markdown", "governance review eligibility sentinel");
+        var created = mvc.perform(post("/api/v1/runbooks/{key}/versions", key).with(actor("author", "RUNBOOK_ADMIN", true))
+                .header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content(governanceBody.toString()))
+                .andExpect(status().isCreated()).andReturn();
+        String draftId = json.readTree(created.getResponse().getContentAsString()).path("id").asString();
+        long principalsBeforeRead = jdbc.sql("select count(*) from principal").query(Long.class).single();
+        assertThat(jdbc.sql("select count(*) from principal where subject=:subject")
+                .param("subject", newReviewer).query(Long.class).single()).isZero();
+
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("author", "RUNBOOK_ADMIN", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.displayName").value("Pool recovery"))
+                .andExpect(jsonPath("$.ownerTeam").value("demo-sre")).andExpect(jsonPath("$.canReview").value(false));
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor(newReviewer, "RUNBOOK_ADMIN", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.canReview").value(true));
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isForbidden());
+        assertThat(jdbc.sql("select count(*) from principal").query(Long.class).single()).isEqualTo(principalsBeforeRead);
+
+        mvc.perform(post("/api/v1/runbook-versions/{id}/review", draftId).with(actor(newReviewer, "RUNBOOK_ADMIN", true))
+                .header("Idempotency-Key", UUID.randomUUID()).header("If-Match", "\"0\""))
+                .andExpect(status().isOk());
+        assertThat(jdbc.sql("select count(*) from principal where subject=:subject")
+                .param("subject", newReviewer).query(Long.class).single()).isEqualTo(1L);
+        mvc.perform(post("/api/v1/runbook-versions/{id}/publish", draftId).with(actor("author", "RUNBOOK_ADMIN", true))
+                .header("Idempotency-Key", UUID.randomUUID()).header("If-Match", "\"1\""))
+                .andExpect(status().isOk());
+        var nextDraft = mvc.perform(post("/api/v1/runbooks/{key}/versions", key).with(actor("author", "RUNBOOK_ADMIN", true))
+                .header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content(governanceBody.toString()))
+                .andExpect(status().isCreated()).andReturn();
+        String nextDraftId = json.readTree(nextDraft.getResponse().getContentAsString()).path("id").asString();
+
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "RB-QUERY-").param("limit", "100")
+                .with(actor("reviewer", "RUNBOOK_ADMIN", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].runbookKey").value(key))
+                .andExpect(jsonPath("$[0].serviceKey").value("checkout-api"))
+                .andExpect(jsonPath("$[0].latestVersionId").value(nextDraftId))
+                .andExpect(jsonPath("$[0].latestVersionNumber").value(2)).andExpect(jsonPath("$[0].lifecycle").value("draft"));
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "RB-QUERY-").param("limit", "100")
+                .with(actor("global-admin", "PLATFORM_ADMIN", false)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].latestVersionId").value(nextDraftId));
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "RB-QUERY-").param("limit", "100")
+                .with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].latestVersionId").value(draftId))
+                .andExpect(jsonPath("$[0].lifecycle").value("published"));
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "RB-QUERY-").param("limit", "100")
+                .with(actor("outsider", "OBSERVER", false)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/v1/runbooks/{key}/versions", key).param("afterVersion", "0").param("limit", "20")
+                .with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(draftId));
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.canReview").value(false));
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("outsider", "OBSERVER", false)))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/runbook-versions/{id}/diff", draftId).param("otherVersionId", draftId)
+                .with(actor("observer", "OBSERVER", true))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/runbook-versions/{id}", nextDraftId).with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isForbidden());
+        jdbc.sql("update runbook_version set lifecycle='retired' where id=:id").param("id", UUID.fromString(draftId)).update();
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("observer", "OBSERVER", true)))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("reviewer", "RUNBOOK_ADMIN", true)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.lifecycle").value("retired"));
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "RB-QUERY-").param("limit", "101")
+                .with(actor("observer", "OBSERVER", true))).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/runbooks").param("afterKey", "bad key").param("limit", "20")
+                .with(actor("observer", "OBSERVER", true))).andExpect(status().isBadRequest());
+    }
+
     @Test void unicodeLengthsMatchThePublishedContractAndMalformedTextIsRejected() throws Exception {
         String key = "RB-" + UUID.randomUUID();
         var content = body(key).put("markdown", "🙂".repeat(60001));

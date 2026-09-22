@@ -1,4 +1,5 @@
 import type { CockpitDiagnosis, EvidenceReference } from "./incidentApi";
+import { EvidenceDrawer } from "../evidence/EvidenceDrawer";
 
 function percentage(value: number): string {
     return new Intl.NumberFormat("zh-CN", {
@@ -8,9 +9,11 @@ function percentage(value: number): string {
 }
 
 export function DiagnosisPanel({
+    incidentId,
     diagnosis,
     evidence,
 }: {
+    incidentId: string;
     diagnosis: CockpitDiagnosis;
     evidence: EvidenceReference[];
 }) {
@@ -86,6 +89,10 @@ export function DiagnosisPanel({
                                     second: "2-digit",
                                 }).format(new Date(item.capturedAt))}
                             </time>
+                            <EvidenceDrawer
+                                incidentId={incidentId}
+                                evidence={item}
+                            />
                         </li>
                     ))}
                 </ul>

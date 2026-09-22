@@ -8,6 +8,7 @@ import {
 import { ApiProblem, apiFetch } from "../../api/client";
 import type { components } from "../../api/generated";
 import { useAuth } from "../../auth/authContext";
+import { useQueryScope } from "../../auth/useQueryScope";
 
 export type IncidentCockpit = components["schemas"]["IncidentCockpit"];
 export type IncidentSummary = components["schemas"]["IncidentSummary"];
@@ -88,25 +89,30 @@ export function staleMessage(error: unknown): string | null {
 
 export function useIncidents(filters: IncidentFilters) {
     const { user } = useAuth();
+    const scope = useQueryScope();
     return useQuery({
-        queryKey: ["incidents", filters, user?.subject],
-        queryFn: () =>
+        queryKey: ["incidents", filters, scope],
+        queryFn: ({ signal }) =>
             apiFetch<IncidentPage>(`/incidents${queryString(filters)}`, {
+                signal,
                 headers: authorizationHeaders(user?.accessToken),
             }),
+        enabled: Boolean(user),
         refetchInterval: 5_000,
     });
 }
 
 export function useIncident(incidentId: string) {
     const { user } = useAuth();
+    const scope = useQueryScope();
     return useQuery({
-        queryKey: ["incident", incidentId, user?.subject],
-        queryFn: () =>
+        queryKey: ["incident", incidentId, scope],
+        queryFn: ({ signal }) =>
             apiFetch<IncidentCockpit>(`/incidents/${incidentId}`, {
+                signal,
                 headers: authorizationHeaders(user?.accessToken),
             }),
-        enabled: Boolean(incidentId),
+        enabled: Boolean(incidentId && user),
         refetchInterval: (query) => {
             const status = query.state.data?.incident.status;
             return status && !terminalStatuses.has(status) ? 5_000 : false;
@@ -116,16 +122,18 @@ export function useIncident(incidentId: string) {
 
 export function useIncidentTimeline(incidentId: string) {
     const { user } = useAuth();
+    const scope = useQueryScope();
     return useQuery({
-        queryKey: ["incidentTimeline", incidentId, user?.subject],
-        queryFn: () =>
+        queryKey: ["incidentTimeline", incidentId, scope],
+        queryFn: ({ signal }) =>
             apiFetch<IncidentTimelinePage>(
                 `/incidents/${incidentId}/timeline`,
                 {
+                    signal,
                     headers: authorizationHeaders(user?.accessToken),
                 },
             ),
-        enabled: Boolean(incidentId),
+        enabled: Boolean(incidentId && user),
     });
 }
 

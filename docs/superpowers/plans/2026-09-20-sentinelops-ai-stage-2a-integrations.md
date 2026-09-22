@@ -756,6 +756,8 @@ git commit -m "feat: add reproducible AI evaluation"
 
 Implementation note: load `frontend-design`, `ui-ux-pro-max`, and `vercel-react-best-practices` before this task.
 
+Task 6 implementation clarification (2026-09-23): preserve the existing dark steel/teal console, visible focus, responsive tables and explicit textual status. Add service-scoped keyset directories (`GET /services`, `GET /runbooks`), administrator-only Eval history (`GET /eval-runs`), and an authorized single-snapshot evidence endpoint rather than fetching up to 100 large bodies for one drawer. Non-admin Runbook readers see only published versions; authoring and review remain administrator commands. Version responses expose identity labels and server-derived `canReview` through a read-only principal lookup. Evidence exposes only safe time-window/redaction metadata, never arbitrary query parameters. Query caches use opaque session scopes, not access tokens. The current executor allowlist remains fixed in typed Runbook fields; only supported verification bounds and markdown are editable. Approval/publish preconditions and immutable versions are unchanged.
+
 - [ ] **Step 1: Write failing governance UI tests**
 
 ```tsx

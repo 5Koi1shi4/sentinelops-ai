@@ -19,7 +19,8 @@ import tools.jackson.databind.ObjectMapper;
 @Repository
 public class KnowledgeStore {
     private static final String SELECT = """
-            select rv.*, r.runbook_key, r.service_id from runbook_version rv
+            select rv.*, r.runbook_key, r.service_id, r.display_name runbook_display_name,
+                   r.owner_team runbook_owner_team from runbook_version rv
             join runbook r on r.id=rv.runbook_id
             """;
     private final JdbcClient jdbc;
@@ -62,9 +63,43 @@ public class KnowledgeStore {
                 .param("key", key).query((rs, index) -> new Runbook(rs.getObject("id", UUID.class),
                         rs.getObject("service_id", UUID.class), rs.getString("display_name"), rs.getString("owner_team"))).single();
     }
-    public List<Row> versions(UUID runbookId, int after, int limit) {
-        return jdbc.sql(SELECT + " where rv.runbook_id=:id and rv.version_number>:after order by rv.version_number limit :limit")
+    public List<Row> versions(UUID runbookId, int after, int limit, boolean includeAdministrative) {
+        String lifecycle = includeAdministrative ? "" : " and rv.lifecycle='published'";
+        return jdbc.sql(SELECT + " where rv.runbook_id=:id and rv.version_number>:after" + lifecycle
+                        + " order by rv.version_number limit :limit")
                 .param("id", runbookId).param("after", after).param("limit", limit).query(this::row).list();
+    }
+    public List<RunbookSummaryRow> runbookSummaries(String afterKey, int limit, boolean includeAdministrative,
+                                                     boolean platformAdmin, java.util.Set<UUID> serviceIds) {
+        if (!platformAdmin && serviceIds.isEmpty()) return List.of();
+        String lifecycle = includeAdministrative ? "" : " and rv.lifecycle='published'";
+        String serviceScope = platformAdmin ? "" : " and r.service_id in (:serviceIds)";
+        String cursor = afterKey == null ? "" : " and r.runbook_key>:afterKey";
+        String sql = """
+                select r.id, r.runbook_key, r.service_id, s.service_key, r.display_name, r.owner_team,
+                       latest.id latest_version_id, latest.version_number latest_version_number,
+                       latest.lifecycle, latest.risk_level
+                from runbook r
+                join service_catalog s on s.id=r.service_id
+                join lateral (
+                    select rv.id, rv.version_number, rv.lifecycle, rv.risk_level
+                    from runbook_version rv
+                    where rv.runbook_id=r.id%s
+                    order by rv.version_number desc
+                    limit 1
+                ) latest on true
+                where true%s%s
+                order by r.runbook_key
+                limit :limit
+                """.formatted(lifecycle, cursor, serviceScope);
+        var query = jdbc.sql(sql).param("limit", limit);
+        if (afterKey != null) query = query.param("afterKey", afterKey);
+        if (!platformAdmin) query = query.param("serviceIds", serviceIds);
+        return query.query((rs, index) -> new RunbookSummaryRow(
+                rs.getObject("id", UUID.class), rs.getString("runbook_key"), rs.getObject("service_id", UUID.class),
+                rs.getString("service_key"),
+                rs.getString("display_name"), rs.getString("owner_team"), rs.getObject("latest_version_id", UUID.class),
+                rs.getInt("latest_version_number"), rs.getString("lifecycle"), rs.getString("risk_level"))).list();
     }
     public Row insertDraft(UUID runbookId, UUID actor, JsonNode definition, String checksum, String markdown) {
         UUID id = ids.generate();
@@ -128,7 +163,8 @@ public class KnowledgeStore {
 
     private Row row(ResultSet rs, int index) throws SQLException {
         return new Row(rs.getObject("id", UUID.class), rs.getObject("runbook_id", UUID.class), rs.getString("runbook_key"),
-                rs.getObject("service_id", UUID.class), rs.getInt("version_number"), rs.getString("lifecycle"), rs.getLong("revision"),
+                rs.getObject("service_id", UUID.class), rs.getString("runbook_display_name"), rs.getString("runbook_owner_team"),
+                rs.getInt("version_number"), rs.getString("lifecycle"), rs.getLong("revision"),
                 json.readTree(rs.getString("definition")), rs.getString("markdown"), rs.getString("definition_checksum"),
                 rs.getObject("author_principal_id", UUID.class), rs.getObject("last_editor_principal_id", UUID.class),
                 rs.getObject("reviewer_principal_id", UUID.class), instant(rs, "reviewed_at"), instant(rs, "published_at"));
@@ -138,7 +174,10 @@ public class KnowledgeStore {
         return time == null ? null : time.toInstant();
     }
     public record Runbook(UUID id, UUID serviceId, String displayName, String ownerTeam) {}
-    public record Row(UUID id, UUID runbookId, String runbookKey, UUID serviceId, int versionNumber, String lifecycle,
+    public record RunbookSummaryRow(UUID id, String runbookKey, UUID serviceId, String serviceKey, String displayName, String ownerTeam,
+                                    UUID latestVersionId, int latestVersionNumber, String lifecycle, String riskLevel) {}
+    public record Row(UUID id, UUID runbookId, String runbookKey, UUID serviceId, String displayName, String ownerTeam,
+            int versionNumber, String lifecycle,
             long revision, JsonNode definition, String markdown, String checksum, UUID authorId, UUID lastEditorId,
             UUID reviewerId, Instant reviewedAt, Instant publishedAt) {
         public Row { definition = definition.deepCopy(); }

@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List authorized services
+         * @description Returns only services in the principal's scope; PLATFORM_ADMIN may browse across services.
+         */
+        get: operations["listServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/incidents": {
         parameters: {
             query?: never;
@@ -73,6 +93,29 @@ export interface paths {
         };
         /** Read separately authorized redacted evidence snapshots */
         get: operations["listIncidentEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/incidents/{incidentId}/evidence/{evidenceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incidentId: components["parameters"]["IncidentId"];
+                evidenceId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one service-scoped redacted evidence snapshot
+         * @description The evidence id is bound to the incident id in the same database query.
+         */
+        get: operations["getIncidentEvidence"];
         put?: never;
         post?: never;
         delete?: never;
@@ -196,6 +239,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runbooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List service-scoped Runbook summaries
+         * @description Runbook administrators see each Runbook's latest version; other roles see only its latest published version.
+         */
+        get: operations["listRunbooks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runbooks/{key}/versions": {
         parameters: {
             query?: never;
@@ -206,8 +269,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Runbook versions
-         * @description Lists versions for a Runbook. Draft and administrative views are restricted to Runbook administrators and the service scope.
+         * List service-scoped Runbook versions
+         * @description Runbook administrators can read all lifecycle states; other roles can read published versions only.
          */
         get: operations["listRunbookVersions"];
         put?: never;
@@ -231,7 +294,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a Runbook version */
+        /**
+         * Get a Runbook version
+         * @description Published versions are visible to authorized roles; drafts and retired versions require Runbook administration.
+         */
         get: operations["getRunbookVersion"];
         /** Update a Runbook draft */
         put: operations["updateRunbookDraft"];
@@ -335,7 +401,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List persisted Eval run summaries
+         * @description Returns only summary fields and aggregate metrics; only PLATFORM_ADMIN principals may read Eval runs.
+         */
+        get: operations["listEvalRunSummaries"];
         put?: never;
         /**
          * Run the reproducible AI evaluation dataset
@@ -375,6 +445,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ServiceSummary: {
+            /** Format: uuid */
+            id: string;
+            serviceKey: string;
+            displayName: string;
+            ownerTeam: string;
+        };
+        RunbookSummary: {
+            /** Format: uuid */
+            id: string;
+            runbookKey: string;
+            /** Format: uuid */
+            serviceId: string;
+            serviceKey: string;
+            displayName: string;
+            ownerTeam: string;
+            /** Format: uuid */
+            latestVersionId: string;
+            /** Format: int32 */
+            latestVersionNumber: number;
+            /** @enum {string} */
+            lifecycle: "draft" | "published" | "retired";
+            riskLevel: components["schemas"]["RiskLevel"];
+        };
         /** @enum {string} */
         PlatformRole:
             | "OBSERVER"
@@ -471,6 +565,8 @@ export interface components {
             runbookKey: string;
             /** Format: uuid */
             serviceId: string;
+            displayName: string;
+            ownerTeam: string;
             /** Format: int32 */
             versionNumber: number;
             /** @enum {string} */
@@ -486,6 +582,7 @@ export interface components {
             reviewerPrincipalId: string | null;
             /** Format: date-time */
             publishedAt: string | null;
+            canReview: boolean;
         };
         VersionDiff: {
             /** Format: uuid */
@@ -528,6 +625,22 @@ export interface components {
              * @description Optional completed run from the same scoring and policy snapshot.
              */
             baselineRunId: string | null;
+        };
+        EvalRunSummary: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "running" | "completed" | "failed";
+            provider: string;
+            modelName: string;
+            /** Format: uuid */
+            datasetId: string;
+            releaseAllowed: boolean | null;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            completedAt: string | null;
+            aggregateMetrics: components["schemas"]["EvalAggregateMetrics"];
         };
         EvalRunView: {
             /** Format: uuid */
@@ -739,6 +852,20 @@ export interface components {
             /** Format: date-time */
             capturedAt: string;
             truncated: boolean;
+            /**
+             * Format: date-time
+             * @description Historical window start when recorded; null when unavailable.
+             */
+            from: string | null;
+            /**
+             * Format: date-time
+             * @description Historical window end when recorded; null when unavailable.
+             */
+            to: string | null;
+            redactionCount: number;
+            redactionRules: (
+                "json-pointer" | "key-denylist" | "max-depth" | "string-length"
+            )[];
             redactedPayload: {
                 [key: string]: unknown;
             };
@@ -963,6 +1090,32 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listServices: {
+        parameters: {
+            query?: {
+                afterKey?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service summaries ordered by service key. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceSummary"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     listIncidents: {
         parameters: {
             query?: {
@@ -1067,6 +1220,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvidenceSnapshot"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getIncidentEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incidentId: components["parameters"]["IncidentId"];
+                evidenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted evidence snapshot and safe redaction metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceSnapshot"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -1278,6 +1457,32 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             503: components["responses"]["DependencyUnavailable"];
+        };
+    };
+    listRunbooks: {
+        parameters: {
+            query?: {
+                afterKey?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runbook summaries ordered by Runbook key. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunbookSummary"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listRunbookVersions: {
@@ -1536,6 +1741,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listEvalRunSummaries: {
+        parameters: {
+            query?: {
+                beforeId?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description UUIDv7 keyset-paginated Eval run summaries, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunSummary"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     createEvalRun: {

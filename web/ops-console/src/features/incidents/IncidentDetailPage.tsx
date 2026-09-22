@@ -113,6 +113,7 @@ export function IncidentDetailPage({
                 <div className="cockpit-primary">
                     {diagnosis ? (
                         <DiagnosisPanel
+                            incidentId={incidentId}
                             diagnosis={diagnosis}
                             evidence={cockpit.evidence}
                         />

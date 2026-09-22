@@ -2,6 +2,8 @@ package io.sentinelops.api.identity.application;
 
 import io.sentinelops.api.shared.id.UuidV7Generator;
 import java.util.UUID;
+import java.util.Objects;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,5 +37,15 @@ public class PrincipalLookup {
                 .param("displayName", trustedDisplayName)
                 .query(UUID.class)
                 .single();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<UUID> findId(CurrentPrincipal principal) {
+        Objects.requireNonNull(principal, "principal");
+        return jdbc.sql("select id from principal where issuer=:issuer and subject=:subject")
+                .param("issuer", principal.issuer())
+                .param("subject", principal.subject())
+                .query(UUID.class)
+                .optional();
     }
 }

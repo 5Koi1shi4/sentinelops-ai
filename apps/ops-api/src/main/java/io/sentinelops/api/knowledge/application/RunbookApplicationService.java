@@ -125,14 +125,34 @@ public class RunbookApplicationService {
         }, 200);
     }
 
-    public VersionView get(UUID id, CurrentPrincipal principal) { return view(authorized(id, principal)); }
+    public VersionView get(UUID id, CurrentPrincipal principal) {
+        var row = visible(id, principal);
+        return view(row, principal, principals.findId(principal).orElse(null));
+    }
+
+    public List<RunbookSummary> list(String afterKey, int limit, CurrentPrincipal principal) {
+        authorizeDirectory(principal);
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("invalid Runbook page");
+        String cursor = afterKey == null || afterKey.isEmpty() ? null : afterKey;
+        if (cursor != null) requireKey(cursor);
+        boolean platformAdmin = principal.hasAnyRole(PlatformRole.PLATFORM_ADMIN);
+        boolean includeAdministrative = isRunbookAdministrator(principal);
+        return store.runbookSummaries(cursor, limit, includeAdministrative, platformAdmin, principal.serviceIds()).stream()
+                .filter(row -> principal.canAccess(row.serviceId()))
+                .map(row -> new RunbookSummary(row.id(), row.runbookKey(), row.serviceId(), row.serviceKey(), row.displayName(), row.ownerTeam(),
+                        row.latestVersionId(), row.latestVersionNumber(), row.lifecycle(), row.riskLevel().toUpperCase(java.util.Locale.ROOT)))
+                .toList();
+    }
 
     public List<VersionView> versions(String key, int afterVersion, int limit, CurrentPrincipal principal) {
         requireKey(key);
         if (afterVersion < 0 || limit < 1 || limit > 50) throw new IllegalArgumentException("invalid version page");
         var runbook = store.findRunbook(key).orElseThrow(RunbookApplicationService::notFound);
-        authorize(principal, runbook.serviceId(), true);
-        return store.versions(runbook.id(), afterVersion, limit).stream().map(this::view).toList();
+        boolean includeAdministrative = isRunbookAdministrator(principal);
+        authorize(principal, runbook.serviceId(), false);
+        UUID currentPrincipalId = principals.findId(principal).orElse(null);
+        return store.versions(runbook.id(), afterVersion, limit, includeAdministrative).stream()
+                .map(row -> view(row, principal, currentPrincipalId)).toList();
     }
 
     public VersionDiff diff(UUID from, UUID to, CurrentPrincipal principal) {
@@ -166,7 +186,8 @@ public class RunbookApplicationService {
             Supplier<Row> action, int status) {
         requireCommandKey(key);
         var response = idempotency.execute(new IdempotencyService.Scope(principal.principalKey(), "runbook:" + route),
-                key, hash(payload), () -> new IdempotencyService.Response(status, json.valueToTree(view(action.get()))));
+                key, hash(payload), () -> new IdempotencyService.Response(status,
+                        json.valueToTree(view(action.get(), principal, principals.findId(principal).orElse(null)))));
         return json.treeToValue(response.body(), VersionView.class);
     }
 
@@ -174,6 +195,15 @@ public class RunbookApplicationService {
         Objects.requireNonNull(id, "id");
         var row = store.find(id).orElseThrow(RunbookApplicationService::notFound);
         authorize(principal, row.serviceId(), true);
+        return row;
+    }
+    private Row visible(UUID id, CurrentPrincipal principal) {
+        Objects.requireNonNull(id, "id");
+        var row = store.find(id).orElseThrow(RunbookApplicationService::notFound);
+        authorize(principal, row.serviceId(), false);
+        if (!isRunbookAdministrator(principal) && !"published".equals(row.lifecycle())) {
+            throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied", "The principal cannot view this Runbook version.");
+        }
         return row;
     }
     private Row lockDraft(UUID id, long revision, CurrentPrincipal principal) {
@@ -198,6 +228,15 @@ public class RunbookApplicationService {
         boolean role = admin ? principal.hasAnyRole(PlatformRole.RUNBOOK_ADMIN, PlatformRole.PLATFORM_ADMIN)
                 : principal.hasAnyRole(PlatformRole.values());
         if (!role || !principal.canAccess(service)) throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied", "The principal cannot access this Runbook service.");
+    }
+    private static void authorizeDirectory(CurrentPrincipal principal) {
+        Objects.requireNonNull(principal, "principal");
+        if (!principal.hasAnyRole(PlatformRole.values())) {
+            throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied", "The principal cannot access the Runbook catalog.");
+        }
+    }
+    private static boolean isRunbookAdministrator(CurrentPrincipal principal) {
+        return principal.hasAnyRole(PlatformRole.RUNBOOK_ADMIN, PlatformRole.PLATFORM_ADMIN);
     }
     private EmbeddingGateway provider() {
         var provider = providers.getIfAvailable();
@@ -241,9 +280,14 @@ public class RunbookApplicationService {
         if (value.isArray()) { var result = json.createArrayNode(); value.forEach(item -> result.add(canonical(item))); return result; }
         return value;
     }
-    private VersionView view(Row row) {
-        return new VersionView(row.id(), row.runbookId(), row.runbookKey(), row.serviceId(), row.versionNumber(), row.lifecycle(),
-                row.revision(), row.definition(), row.markdown(), row.checksum(), row.authorId(), row.reviewerId(), row.publishedAt());
+    private VersionView view(Row row, CurrentPrincipal principal, UUID currentPrincipalId) {
+        boolean canReview = principal != null && isRunbookAdministrator(principal)
+                && principal.canAccess(row.serviceId()) && "draft".equals(row.lifecycle())
+                && (currentPrincipalId == null
+                    || (!currentPrincipalId.equals(row.authorId()) && !currentPrincipalId.equals(row.lastEditorId())));
+        return new VersionView(row.id(), row.runbookId(), row.runbookKey(), row.serviceId(), row.displayName(), row.ownerTeam(),
+                row.versionNumber(), row.lifecycle(), row.revision(), row.definition(), row.markdown(), row.checksum(),
+                row.authorId(), row.reviewerId(), row.publishedAt(), canReview);
     }
     private static void requireOutsideTransaction() {
         if (TransactionSynchronizationManager.isActualTransactionActive()) throw new IllegalStateException("Embedding calls require no active transaction");
@@ -273,12 +317,14 @@ public class RunbookApplicationService {
         public DraftContent { definition = RunbookApplicationService.definition(definition); text(markdown, 120000); }
         @Override public JsonNode definition() { return definition.deepCopy(); }
     }
-    public record VersionView(UUID id, UUID runbookId, String runbookKey, UUID serviceId, int versionNumber, String lifecycle,
-            long revision, JsonNode definition, String markdown, String definitionChecksum, UUID authorPrincipalId,
-            UUID reviewerPrincipalId, Instant publishedAt) {
+    public record VersionView(UUID id, UUID runbookId, String runbookKey, UUID serviceId, String displayName, String ownerTeam,
+            int versionNumber, String lifecycle, long revision, JsonNode definition, String markdown, String definitionChecksum,
+            UUID authorPrincipalId, UUID reviewerPrincipalId, Instant publishedAt, boolean canReview) {
         public VersionView { definition = definition.deepCopy(); }
         @Override public JsonNode definition() { return definition.deepCopy(); }
     }
+    public record RunbookSummary(UUID id, String runbookKey, UUID serviceId, String serviceKey, String displayName, String ownerTeam,
+            UUID latestVersionId, int latestVersionNumber, String lifecycle, String riskLevel) {}
     public record VersionDiff(UUID fromVersionId, UUID toVersionId, boolean definitionChanged, boolean markdownChanged,
             JsonNode beforeDefinition, JsonNode afterDefinition, String beforeMarkdown, String afterMarkdown) {
         public VersionDiff { beforeDefinition = beforeDefinition.deepCopy(); afterDefinition = afterDefinition.deepCopy(); }

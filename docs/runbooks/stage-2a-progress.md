@@ -139,8 +139,27 @@ npm --prefix web/ops-console run api:check
 
 Dockerfile 已补充复制 `evals/datasets`，避免只在本地 Maven 构建时存在数据集。`build/task5-docker-build.log` 的本地 API 镜像构建通过；`build/task5-docker-resource-check.log` 证明无网络一次性容器可在最终镜像 JAR 中找到数据集。该检查不启动业务服务，也不等同于完整部署验收。
 
+## Task 6：Runbook、证据与 Eval 治理界面
+
+实现按需加载的 Runbook 列表、受控字段草稿编辑、版本差异、独立评审与确认发布；已发布版本只读并支持创建下一草稿。分页历史未覆盖当前版本时阻止使用不完整基准发布。Observer 仅查看授权服务的已发布版本，不请求管理员差异接口。
+
+补齐服务目录、Runbook 目录、Eval 历史和事故绑定的单条证据读取 API，并同步 OpenAPI 类型。读取路径不创建 principal；首次访问的独立评审人也能获得正确评审资格，写入评审时才创建身份记录。
+
+证据抽屉展示来源、实际查询窗口、哈希、截断与脱敏信息，正文作为转义文本显示；关闭后释放快照缓存。Eval 明确展示五项发布阈值和后端发布结论，缺失指标与费用显示不可用，准确率、累计延迟和费用分开绘图，并提供可访问表格。路由和图表分别打包，事故入口不直接加载 ECharts。
+
+查询缓存使用不含 Token 的会话范围标识。身份或授权切换清空本地编辑；同一身份权限未变时自动续期保留未保存草稿，同时切换数据缓存范围。冲突保留输入，结果不确定的命令复用原请求及幂等键。
+
+验证证据：
+
+- Java 21 完整后端回归 `build/task6-final-all.log`：371 项通过（API 332、Executor 29、Demo 10），无失败或跳过；强化首次评审人场景后 `task6-first-reviewer-green.log` 6 项通过。
+- 最终前端 `build/task6-complete-tests.log`：12 个文件、48 项通过；`task6-complete-lint.log`、`task6-complete-build.log`、`task6-complete-contract.log` 均通过。
+- 红—绿回归覆盖同用户授权变更缓存泄漏、证据关闭后缓存释放、Token 续期丢失输入，以及分页版本差异基准选择。最终复审还修正了跨版本残留命令、旧异步响应跳转、差异方向和未知结果丢失原幂等键；`task6-runbook-p2-red.log` / `task6-runbook-p2-green.log` 保存回归证据。
+- 本地浏览器使用合成身份及受控 HTTP fixture 验证桌面和 390px 窄屏：证据 Esc 焦点恢复、五项 Eval 阈值与独立趋势图、草稿及已发布只读页面。记录位于 `build/task6-browser/report.md`。该检查不等同于真实 OIDC、后端或模型 E2E。
+
+独立 Spec/Quality 最终复审通过，无剩余已确认 P1/P2。操作说明见 [治理控制台](governance-console.md)。
+
 ## 下一实施任务
 
-Task 5 已完成，下一项为 Task 6：Runbook、证据与 Eval 治理界面。随后按计划推进身份审计及 Stage 2A 总体验收。
+按用户要求，Task 6 完成后暂停实施。后续待恢复的任务为 Task 7：主体同步、服务范围授权与追加式审计；尚未开始实现。
 
 当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入在 Task 4 / 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。

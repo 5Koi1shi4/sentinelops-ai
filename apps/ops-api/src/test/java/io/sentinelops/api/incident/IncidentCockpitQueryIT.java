@@ -43,6 +43,7 @@ class IncidentCockpitQueryIT extends PostgresIntegrationTest {
     @Test
     void returnsServiceScopedSanitizedCockpitWithStableEntityIdsAndEtag() throws Exception {
         var fixture = cockpitFixture();
+        UUID historicalEvidenceId = insertHistoricalEvidence(fixture.incidentId());
 
         var result = mockMvc.perform(get("/api/v1/incidents/{id}", fixture.incidentId())
                         .with(observer(fixture.serviceId())))
@@ -86,6 +87,44 @@ class IncidentCockpitQueryIT extends PostgresIntegrationTest {
         mockMvc.perform(get("/api/v1/incidents/{id}/evidence", fixture.incidentId())
                         .with(observer(fixture.otherServiceId())))
                 .andExpect(status().isForbidden());
+        long evidenceBefore = jdbc.sql("select count(*) from evidence_snapshot").query(Long.class).single();
+        long auditsBefore = jdbc.sql("select count(*) from audit_record").query(Long.class).single();
+        mockMvc.perform(get("/api/v1/incidents/{id}/evidence", fixture.incidentId())
+                        .with(observer(fixture.serviceId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].from").value("2026-09-23T00:00:00Z"))
+                .andExpect(jsonPath("$[0].redactionCount").value(2))
+                .andExpect(jsonPath("$[0].redactionRules.length()").value(2))
+                .andExpect(jsonPath("$[0].redactionRules[0]").value("key-denylist"))
+                .andExpect(jsonPath("$[0].redactedPayload.parameters").doesNotExist());
+        var evidence = mockMvc.perform(get("/api/v1/incidents/{id}/evidence/{evidenceId}",
+                        fixture.incidentId(), fixture.evidenceId()).with(observer(fixture.serviceId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.from").value("2026-09-23T00:00:00Z"))
+                .andExpect(jsonPath("$.to").value("2026-09-23T00:15:00Z"))
+                .andExpect(jsonPath("$.redactionCount").value(2))
+                .andExpect(jsonPath("$.redactionRules.length()").value(2))
+                .andExpect(jsonPath("$.redactionRules[0]").value("key-denylist"))
+                .andExpect(jsonPath("$.redactedPayload.parameters").doesNotExist())
+                .andReturn();
+        assertThat(evidence.getResponse().getContentAsString())
+                .doesNotContain("query-secret-marker", "parameter-secret-marker", "unredacted-evidence-marker", "unregistered-secret-marker");
+        mockMvc.perform(get("/api/v1/incidents/{id}/evidence/{evidenceId}",
+                        fixture.incidentId(), historicalEvidenceId).with(observer(fixture.serviceId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.from").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.to").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.redactionCount").value(0))
+                .andExpect(jsonPath("$.redactionRules.length()").value(0));
+        UUID foreignEvidence = jdbc.sql("""
+                select e.id from evidence_snapshot e join incident i on i.id=e.incident_id
+                where i.service_id=:service and e.source_ref='FOREIGN-EVIDENCE'
+                """).param("service", fixture.otherServiceId()).query(UUID.class).single();
+        mockMvc.perform(get("/api/v1/incidents/{id}/evidence/{evidenceId}",
+                        fixture.incidentId(), foreignEvidence).with(observer(fixture.serviceId())))
+                .andExpect(status().isNotFound());
+        assertThat(jdbc.sql("select count(*) from evidence_snapshot").query(Long.class).single()).isEqualTo(evidenceBefore);
+        assertThat(jdbc.sql("select count(*) from audit_record").query(Long.class).single()).isEqualTo(auditsBefore);
         mockMvc.perform(get("/api/v1/incidents")
                         .with(observer(fixture.otherServiceId())))
                 .andExpect(status().isOk())
@@ -175,8 +214,8 @@ class IncidentCockpitQueryIT extends PostgresIntegrationTest {
                           query_spec, redacted_payload, content_hash, captured_at, truncated
                         ) values (
                           :id, :incidentId, :runId, 'metric', 'E-12',
-                          '{"query":"unredacted-evidence-marker"}'::jsonb,
-                          '{"summary":"连接池等待线程持续上升"}'::jsonb,
+                          '{"query":"unredacted-evidence-marker","token":"query-secret-marker"}'::jsonb,
+                          '{"summary":"连接池等待线程持续上升","from":"2026-09-23T00:00:00Z","to":"2026-09-23T00:15:00Z","parameters":{"token":"parameter-secret-marker"},"redaction":{"count":2,"rules":["key-denylist","string-length","unregistered-secret-marker"]}}'::jsonb,
                           :contentHash, :capturedAt, false
                         )
                         """)
@@ -400,6 +439,26 @@ class IncidentCockpitQueryIT extends PostgresIntegrationTest {
                 evidenceId,
                 approvalId,
                 executionId);
+    }
+
+    private UUID insertHistoricalEvidence(UUID incidentId) {
+        UUID id = UUID.randomUUID();
+        UUID runId = jdbc.sql("select id from diagnosis_run where incident_id=:incident order by started_at desc limit 1")
+                .param("incident", incidentId).query(UUID.class).single();
+        jdbc.sql("""
+                        insert into evidence_snapshot(
+                          id, incident_id, diagnosis_run_id, source_type, source_ref,
+                          query_spec, redacted_payload, content_hash, captured_at, truncated
+                        ) values (
+                          :id, :incident, :run, 'loki', 'HISTORICAL',
+                          '{"query":"older registered query"}'::jsonb,
+                          '{"summary":"older evidence"}'::jsonb,
+                          :hash, clock_timestamp(), false
+                        )
+                        """)
+                .param("id", id).param("incident", incidentId).param("run", runId)
+                .param("hash", "historical-evidence-" + id).update();
+        return id;
     }
 
     private RequestPostProcessor observer(UUID serviceId) {

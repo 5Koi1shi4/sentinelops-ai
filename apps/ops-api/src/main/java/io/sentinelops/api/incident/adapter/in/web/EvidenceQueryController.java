@@ -7,7 +7,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -23,6 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 @RestController
 @RequestMapping("/api/v1/incidents")
 public class EvidenceQueryController {
+    private static final Set<String> REDACTION_RULE_IDS = Set.of("json-pointer", "key-denylist", "max-depth", "string-length");
 
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
@@ -44,7 +48,7 @@ public class EvidenceQueryController {
                         "The incident does not exist."));
         authorize(CurrentPrincipal.from(jwt), serviceId);
         return jdbc.sql("""
-                        select id, source_type, source_ref, redacted_payload::text,
+                        select id, source_type, source_ref, query_spec::text, redacted_payload::text,
                                content_hash, captured_at, truncated
                         from evidence_snapshot
                         where incident_id = :incidentId
@@ -54,6 +58,33 @@ public class EvidenceQueryController {
                 .param("incidentId", id)
                 .query(this::mapEvidence)
                 .list();
+    }
+
+    @GetMapping("/{id}/evidence/{evidenceId}")
+    EvidenceView evidence(@PathVariable UUID id, @PathVariable UUID evidenceId, @AuthenticationPrincipal Jwt jwt) {
+        UUID serviceId = jdbc.sql("select service_id from incident where id = :id")
+                .param("id", id)
+                .query(UUID.class)
+                .optional()
+                .orElseThrow(() -> new ApiProblemException(
+                        HttpStatus.NOT_FOUND,
+                        "incident_not_found",
+                        "The incident does not exist."));
+        authorize(CurrentPrincipal.from(jwt), serviceId);
+        return jdbc.sql("""
+                        select id, source_type, source_ref, query_spec::text, redacted_payload::text,
+                               content_hash, captured_at, truncated
+                        from evidence_snapshot
+                        where incident_id = :incidentId and id = :evidenceId
+                        """)
+                .param("incidentId", id)
+                .param("evidenceId", evidenceId)
+                .query(this::mapEvidence)
+                .optional()
+                .orElseThrow(() -> new ApiProblemException(
+                        HttpStatus.NOT_FOUND,
+                        "evidence_not_found",
+                        "The evidence snapshot does not exist for this incident."));
     }
 
     private void authorize(CurrentPrincipal principal, UUID serviceId) {
@@ -72,14 +103,64 @@ public class EvidenceQueryController {
     }
 
     private EvidenceView mapEvidence(ResultSet resultSet, int rowNumber) throws SQLException {
+        JsonNode payload = objectMapper.readTree(resultSet.getString("redacted_payload"));
+        JsonNode querySpec = objectMapper.readTree(resultSet.getString("query_spec"));
+        int redactionCount = redactionCount(payload.path("redaction").path("count"));
+        List<String> rules = redactionRules(payload.path("redaction").path("rules"));
+        JsonNode safePayload = safePayload(payload);
         return new EvidenceView(
                 resultSet.getObject("id", UUID.class),
                 resultSet.getString("source_type"),
                 resultSet.getString("source_ref"),
-                objectMapper.readTree(resultSet.getString("redacted_payload")),
+                safePayload,
                 resultSet.getString("content_hash"),
                 resultSet.getObject("captured_at", OffsetDateTime.class).toInstant(),
-                resultSet.getBoolean("truncated"));
+                resultSet.getBoolean("truncated"),
+                firstInstant(payload.path("from"), querySpec.path("from")),
+                firstInstant(payload.path("to"), querySpec.path("to")),
+                redactionCount,
+                rules);
+    }
+
+    private static JsonNode safePayload(JsonNode payload) {
+        if (payload instanceof tools.jackson.databind.node.ObjectNode object) {
+            object.remove("parameters");
+            object.remove("querySpec");
+            object.remove("query_spec");
+            object.remove("query");
+            object.remove("redaction");
+            return object;
+        }
+        return payload.deepCopy();
+    }
+
+    private static Instant instantOrNull(JsonNode value) {
+        if (!value.isString() || value.asString().isBlank()) return null;
+        try {
+            return Instant.parse(value.asString());
+        } catch (DateTimeParseException invalidHistoricalWindow) {
+            return null;
+        }
+    }
+
+    private static Instant firstInstant(JsonNode primary, JsonNode historicalQuerySpec) {
+        Instant parsed = instantOrNull(primary);
+        return parsed == null ? instantOrNull(historicalQuerySpec) : parsed;
+    }
+
+    private static int redactionCount(JsonNode value) {
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 0) return 0;
+        return value.asInt();
+    }
+
+    private static List<String> redactionRules(JsonNode value) {
+        var rules = new TreeSet<String>();
+        if (value.isArray()) {
+            value.forEach(rule -> {
+                if (rule.isString() && REDACTION_RULE_IDS.contains(rule.asString())) rules.add(rule.asString());
+            });
+        }
+        return List.copyOf(rules);
     }
 
     public record EvidenceView(
@@ -89,5 +170,9 @@ public class EvidenceQueryController {
             JsonNode redactedPayload,
             String contentHash,
             Instant capturedAt,
-            boolean truncated) {}
+            boolean truncated,
+            Instant from,
+            Instant to,
+            int redactionCount,
+            List<String> redactionRules) {}
 }

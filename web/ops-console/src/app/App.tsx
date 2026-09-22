@@ -1,16 +1,15 @@
 import { useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, useLocation } from "react-router-dom";
 
 import { AuthProvider } from "../auth/AuthProvider";
 import { useAuth } from "../auth/authContext";
-import { IncidentDetailPage } from "../features/incidents/IncidentDetailPage";
-import { IncidentListPage } from "../features/incidents/IncidentListPage";
+import { WorkspaceRoutes } from "./router";
 
 const navigation = [
     { index: "01", label: "事故中心", href: "/incidents" },
     { index: "02", label: "审批工作台", href: "/incidents?view=approvals" },
-    { index: "03", label: "Runbooks", href: "/incidents?view=runbooks" },
-    { index: "04", label: "AI 评测", href: "/incidents?view=evaluations" },
+    { index: "03", label: "Runbooks", href: "/runbooks" },
+    { index: "04", label: "AI 评测", href: "/evals" },
 ];
 
 function SignedOutWorkspace() {
@@ -51,8 +50,26 @@ function SignedOutWorkspace() {
     );
 }
 
-function Console() {
+export function Console() {
     const { user, isLoading } = useAuth();
+    // Renew credentials without discarding a user's draft; changes in identity
+    // or grants still discard local page state. Query caches also isolate tokens.
+    const workspaceIdentity = JSON.stringify([
+        user?.subject,
+        [...(user?.roles ?? [])].sort(),
+        [...(user?.serviceIds ?? [])].sort(),
+    ]);
+    const location = useLocation();
+    const approvals =
+        location.pathname === "/incidents" &&
+        new URLSearchParams(location.search).get("view") === "approvals";
+    const currentHref = location.pathname.startsWith("/runbooks")
+        ? "/runbooks"
+        : location.pathname.startsWith("/evals")
+          ? "/evals"
+          : approvals
+            ? "/incidents?view=approvals"
+            : "/incidents";
     return (
         <div className="console-shell">
             <a className="skip-link" href="#main-content">
@@ -80,33 +97,48 @@ function Console() {
                 </div>
                 <nav className="primary-navigation" aria-label="主导航">
                     <ol>
-                        {navigation.map((item, index) => (
-                            <li key={item.index}>
-                                <Link
-                                    className={index === 0 ? "is-current" : ""}
-                                    to={item.href}
-                                >
-                                    <span
-                                        className="nav-index"
-                                        aria-hidden="true"
+                        {navigation
+                            .filter(
+                                (item) =>
+                                    item.href !== "/evals" ||
+                                    user?.roles.includes("PLATFORM_ADMIN"),
+                            )
+                            .map((item) => (
+                                <li key={item.index}>
+                                    <Link
+                                        className={
+                                            item.href === currentHref
+                                                ? "is-current"
+                                                : ""
+                                        }
+                                        aria-current={
+                                            item.href === currentHref
+                                                ? "page"
+                                                : undefined
+                                        }
+                                        to={item.href}
                                     >
-                                        {item.index}
-                                    </span>
-                                    <span>{item.label}</span>
-                                    <span
-                                        className="nav-arrow"
-                                        aria-hidden="true"
-                                    >
-                                        →
-                                    </span>
-                                </Link>
-                            </li>
-                        ))}
+                                        <span
+                                            className="nav-index"
+                                            aria-hidden="true"
+                                        >
+                                            {item.index}
+                                        </span>
+                                        <span>{item.label}</span>
+                                        <span
+                                            className="nav-arrow"
+                                            aria-hidden="true"
+                                        >
+                                            →
+                                        </span>
+                                    </Link>
+                                </li>
+                            ))}
                     </ol>
                 </nav>
                 <div className="environment-card">
                     <span className="environment-label">ENVIRONMENT</span>
-                    <strong>Stage 1 · Demo</strong>
+                    <strong>Stage 2A · Integrations</strong>
                     <span>本地控制平面</span>
                 </div>
             </aside>
@@ -127,20 +159,7 @@ function Console() {
                         正在恢复会话…
                     </div>
                 ) : user ? (
-                    <Routes>
-                        <Route
-                            path="/incidents"
-                            element={<IncidentListPage />}
-                        />
-                        <Route
-                            path="/incidents/:incidentId"
-                            element={<IncidentDetailPage />}
-                        />
-                        <Route
-                            path="*"
-                            element={<Navigate replace to="/incidents" />}
-                        />
-                    </Routes>
+                    <WorkspaceRoutes key={workspaceIdentity} />
                 ) : (
                     <SignedOutWorkspace />
                 )}

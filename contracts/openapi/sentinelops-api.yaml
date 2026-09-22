@@ -10,6 +10,7 @@ servers:
 security:
   - bearerAuth: []
 tags:
+  - name: Services
   - name: Incidents
   - name: Diagnosis
   - name: Approvals
@@ -19,6 +20,43 @@ tags:
   - name: Evaluations
 
 paths:
+  /services:
+    get:
+      operationId: listServices
+      tags: [Services]
+      summary: List authorized services
+      description: Returns only services in the principal's scope; PLATFORM_ADMIN may browse across services.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      parameters:
+        - name: afterKey
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Service summaries ordered by service key.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/ServiceSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /incidents:
     get:
       operationId: listIncidents
@@ -129,6 +167,35 @@ paths:
                 maxItems: 100
                 items:
                   $ref: "#/components/schemas/EvidenceSnapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /incidents/{incidentId}/evidence/{evidenceId}:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+      - name: evidenceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getIncidentEvidence
+      tags: [Incidents]
+      summary: Read one service-scoped redacted evidence snapshot
+      description: The evidence id is bound to the incident id in the same database query.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      responses:
+        "200":
+          description: Redacted evidence snapshot and safe redaction metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceSnapshot"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -380,17 +447,54 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
 
+  /runbooks:
+    get:
+      operationId: listRunbooks
+      tags: [Runbooks]
+      summary: List service-scoped Runbook summaries
+      description: Runbook administrators see each Runbook's latest version; other roles see only its latest published version.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      parameters:
+        - name: afterKey
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Runbook summaries ordered by Runbook key.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/RunbookSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /runbooks/{key}/versions:
     parameters:
       - $ref: "#/components/parameters/RunbookKey"
     get:
       operationId: listRunbookVersions
       tags: [Runbooks]
-      summary: List Runbook versions
-      description: >-
-        Lists versions for a Runbook. Draft and administrative views are
-        restricted to Runbook administrators and the service scope.
-      x-required-roles: [RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      summary: List service-scoped Runbook versions
+      description: Runbook administrators can read all lifecycle states; other roles can read published versions only.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
       parameters:
         - name: afterVersion
           in: query
@@ -473,7 +577,8 @@ paths:
       operationId: getRunbookVersion
       tags: [Runbooks]
       summary: Get a Runbook version
-      x-required-roles: [RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      description: Published versions are visible to authorized roles; drafts and retired versions require Runbook administration.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
       responses:
         "200":
           description: Runbook version.
@@ -683,6 +788,42 @@ paths:
           $ref: "#/components/responses/Conflict"
 
   /eval-runs:
+    get:
+      operationId: listEvalRunSummaries
+      tags: [Evaluations]
+      summary: List persisted Eval run summaries
+      description: Returns only summary fields and aggregate metrics; only PLATFORM_ADMIN principals may read Eval runs.
+      x-required-roles: [PLATFORM_ADMIN]
+      parameters:
+        - name: beforeId
+          in: query
+          schema:
+            type: string
+            format: uuid
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: UUIDv7 keyset-paginated Eval run summaries, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/EvalRunSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createEvalRun
       tags: [Evaluations]
@@ -885,6 +1026,63 @@ components:
             $ref: "#/components/schemas/ProblemDetail"
 
   schemas:
+    ServiceSummary:
+      type: object
+      additionalProperties: false
+      required: [id, serviceKey, displayName, ownerTeam]
+      properties:
+        id:
+          type: string
+          format: uuid
+        serviceKey:
+          type: string
+        displayName:
+          type: string
+        ownerTeam:
+          type: string
+
+    RunbookSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - runbookKey
+        - serviceId
+        - serviceKey
+        - displayName
+        - ownerTeam
+        - latestVersionId
+        - latestVersionNumber
+        - lifecycle
+        - riskLevel
+      properties:
+        id:
+          type: string
+          format: uuid
+        runbookKey:
+          type: string
+        serviceId:
+          type: string
+          format: uuid
+        serviceKey:
+          type: string
+        displayName:
+          type: string
+        ownerTeam:
+          type: string
+        latestVersionId:
+          type: string
+          format: uuid
+        latestVersionNumber:
+          type: integer
+          format: int32
+          minimum: 1
+        lifecycle:
+          type: string
+          enum: [draft, published, retired]
+        riskLevel:
+          $ref: "#/components/schemas/RiskLevel"
+
     PlatformRole:
       type: string
       enum: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
@@ -1065,6 +1263,8 @@ components:
         - runbookId
         - runbookKey
         - serviceId
+        - displayName
+        - ownerTeam
         - versionNumber
         - lifecycle
         - revision
@@ -1074,6 +1274,7 @@ components:
         - authorPrincipalId
         - reviewerPrincipalId
         - publishedAt
+        - canReview
       properties:
         id:
           type: string
@@ -1086,6 +1287,10 @@ components:
         serviceId:
           type: string
           format: uuid
+        displayName:
+          type: string
+        ownerTeam:
+          type: string
         versionNumber:
           type: integer
           format: int32
@@ -1113,6 +1318,8 @@ components:
         publishedAt:
           type: [string, "null"]
           format: date-time
+        canReview:
+          type: boolean
 
     VersionDiff:
       type: object
@@ -1219,6 +1426,35 @@ components:
           type: [string, "null"]
           format: uuid
           description: Optional completed run from the same scoring and policy snapshot.
+
+    EvalRunSummary:
+      type: object
+      additionalProperties: false
+      required: [id, status, provider, modelName, datasetId, releaseAllowed, startedAt, completedAt, aggregateMetrics]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, completed, failed]
+        provider:
+          type: string
+        modelName:
+          type: string
+        datasetId:
+          type: string
+          format: uuid
+        releaseAllowed:
+          type: [boolean, "null"]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        aggregateMetrics:
+          $ref: "#/components/schemas/EvalAggregateMetrics"
 
     EvalRunView:
       type: object
@@ -1703,7 +1939,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, sourceType, sourceRef, contentHash, capturedAt, truncated, redactedPayload]
+        [id, sourceType, sourceRef, contentHash, capturedAt, truncated, from, to, redactionCount, redactionRules, redactedPayload]
       properties:
         id:
           type: string
@@ -1719,6 +1955,23 @@ components:
           format: date-time
         truncated:
           type: boolean
+        from:
+          type: [string, "null"]
+          format: date-time
+          description: Historical window start when recorded; null when unavailable.
+        to:
+          type: [string, "null"]
+          format: date-time
+          description: Historical window end when recorded; null when unavailable.
+        redactionCount:
+          type: integer
+          minimum: 0
+        redactionRules:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [json-pointer, key-denylist, max-depth, string-length]
         redactedPayload:
           type: object
           additionalProperties: true
