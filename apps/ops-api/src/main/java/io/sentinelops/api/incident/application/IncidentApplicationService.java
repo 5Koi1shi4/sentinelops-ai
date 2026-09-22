@@ -36,16 +36,19 @@ public class IncidentApplicationService {
     private final UuidV7Generator ids;
     private final TimeProvider time;
     private final ObjectMapper objectMapper;
+    private final List<AlertEvidenceCollector> evidenceCollectors;
 
     public IncidentApplicationService(
             IncidentStore store,
             UuidV7Generator ids,
             TimeProvider time,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            List<AlertEvidenceCollector> evidenceCollectors) {
         this.store = store;
         this.ids = ids;
         this.time = time;
         this.objectMapper = objectMapper;
+        this.evidenceCollectors = List.copyOf(evidenceCollectors);
     }
 
     @Transactional
@@ -65,7 +68,13 @@ public class IncidentApplicationService {
                 "service_not_found",
                 "No registered service matches the alert service key."));
         var now = time.now();
-        var allocated = store.upsertIncident(ids.generate(), serviceId, alert, now);
+        var allocated = alert.status() == AlertEnvelope.AlertStatus.RESOLVED
+                ? store.allocateRecovery(serviceId, alert.fingerprint(), now)
+                        .orElseThrow(() -> new ApiProblemException(
+                                HttpStatus.NOT_FOUND,
+                                "incident_not_found",
+                                "No existing incident matches the recovery signal."))
+                : store.upsertIncident(ids.generate(), serviceId, alert, now);
         boolean recoveryDuringExecution = alert.status() == AlertEnvelope.AlertStatus.RESOLVED
                 && allocated.status() == IncidentStatus.EXECUTING;
         if (alert.status() == AlertEnvelope.AlertStatus.RESOLVED
@@ -95,6 +104,8 @@ public class IncidentApplicationService {
                     "idempotency_conflict",
                     "The source event was already associated with another request.");
         }
+        UUID incidentId = allocated.id();
+        evidenceCollectors.forEach(collector -> collector.capture(incidentId, alert, now));
         var outboxPayload = objectMapper.createObjectNode()
                 .put("incidentId", allocated.id().toString())
                 .put("source", alert.source())

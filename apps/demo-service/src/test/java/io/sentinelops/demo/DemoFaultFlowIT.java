@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
@@ -50,6 +51,14 @@ class DemoFaultFlowIT {
     @Test
     void usesTheDedicatedDemoPortByDefault() {
         assertThat(environment.getProperty("server.port")).isEqualTo("8082");
+    }
+
+    @Test
+    void exposesPrometheusMetricsToTheInternalScraper() throws Exception {
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "demo_fault_active")));
     }
 
     @Test

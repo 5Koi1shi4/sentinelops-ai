@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+  external_labels:
+    environment: sentinelops-demo
+
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
+scrape_configs:
+  - job_name: demo-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [demo-service:8082]
+        labels:
+          service_key: checkout-api

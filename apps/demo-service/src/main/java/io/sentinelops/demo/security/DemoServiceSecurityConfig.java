@@ -21,7 +21,10 @@ public class DemoServiceSecurityConfig {
         http.sessionManagement(
                 sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/actuator/health", "/actuator/health/**")
+                .requestMatchers(
+                        "/actuator/health",
+                        "/actuator/health/**",
+                        "/actuator/prometheus")
                 .permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/checkout")
                 .permitAll()

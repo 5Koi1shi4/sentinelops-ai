@@ -1,0 +1,14 @@
+groups:
+  - name: sentinelops-demo-service
+    rules:
+      - alert: SentinelOpsDemoCheckoutFault
+        expr: demo_fault_active == 1
+        for: 5s
+        labels:
+          service_key: checkout-api
+          severity: sev1
+          incident_fingerprint: demo-checkout-connection-pool
+        annotations:
+          summary: 数据库连接池耗尽
+          description: Demo Checkout 的连接池等待与获取超时指标持续异常。
+          runbook: RB-DB-POOL-03

@@ -1,0 +1,12 @@
+.git
+.worktrees
+.toolchains
+.idea
+.vscode
+**/target
+**/node_modules
+**/dist
+build
+*.log
+.env
+.env.*

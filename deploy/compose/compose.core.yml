@@ -1,0 +1,137 @@
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17-trixie
+    environment:
+      POSTGRES_DB: sentinelops
+      POSTGRES_USER: sentinelops
+      POSTGRES_PASSWORD: ${SENTINELOPS_DB_PASSWORD:-sentinelops-demo-db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [control-plane]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+
+  valkey:
+    image: valkey/valkey:8.1.10-alpine3.24
+    user: "999:1000"
+    command: ["valkey-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - valkey_data:/data
+    networks: [control-plane]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  ops-api:
+    build:
+      context: ../..
+      dockerfile: apps/ops-api/Dockerfile
+    environment:
+      SENTINELOPS_DB_URL: jdbc:postgresql://postgres:5432/sentinelops
+      SENTINELOPS_DB_USERNAME: sentinelops
+      SENTINELOPS_DB_PASSWORD: ${SENTINELOPS_DB_PASSWORD:-sentinelops-demo-db}
+      SENTINELOPS_VALKEY_HOST: valkey
+      SENTINELOPS_VALKEY_PORT: 6379
+      SENTINELOPS_OIDC_JWK_SET_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/certs
+      SENTINELOPS_OIDC_ISSUER: http://localhost:8081/realms/sentinelops
+      SENTINELOPS_DEMO_SERVICE_URL: http://demo-service:8082
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [control-plane]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8080/actuator/health/readiness | grep -q '\"status\":\"UP\"'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  ops-executor:
+    build:
+      context: ../..
+      dockerfile: apps/ops-executor/Dockerfile
+    environment:
+      SENTINELOPS_EXECUTOR_ID: demo-executor-1
+      SENTINELOPS_VALKEY_HOST: valkey
+      SENTINELOPS_VALKEY_PORT: 6379
+      SENTINELOPS_CONTROL_PLANE_URL: http://ops-api:8080
+      SENTINELOPS_OAUTH2_TOKEN_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/token
+      SENTINELOPS_EXECUTOR_CLIENT_ID: sentinelops-executor
+      SENTINELOPS_EXECUTOR_CLIENT_SECRET: ${SENTINELOPS_DEMO_EXECUTOR_CLIENT_SECRET:-sentinelops-demo-executor-secret}
+      SENTINELOPS_DEMO_SERVICE_URL: http://demo-service:8082
+    depends_on:
+      valkey:
+        condition: service_healthy
+    networks: [control-plane]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8080/actuator/health/readiness | grep -q '\"status\":\"UP\"'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: web/ops-console/Dockerfile
+      args:
+        VITE_OIDC_ISSUER: http://localhost:8081/realms/sentinelops
+        VITE_OIDC_CLIENT_ID: sentinelops-console
+        VITE_OIDC_REDIRECT_URI: http://localhost:4173/auth/callback
+    depends_on:
+      ops-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4173:8080"
+    networks: [control-plane, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ | grep -q SentinelOps"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+networks:
+  control-plane:
+    internal: true
+  edge:
+
+volumes:
+  postgres_data:
+  valkey_data:

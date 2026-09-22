@@ -1791,7 +1791,7 @@ Expected: FAIL because incident/approval pages are absent.
 
 - [ ] **Step 6: Implement role-aware incident pages**
 
-Use query keys `['incidents', filters]`, `['incident', id]`, and `['incidentTimeline', id]`. Poll active incidents every 5 seconds and stop polling terminal incidents. Never optimistically mark an approval/execution successful; render the server-returned state. On `412`, invalidate detail/timeline queries and display “事故已更新，请重新检查建议”。
+Use query keys `['incidents', filters]`, `['incident', id]`, and `['incidentTimeline', id]`. Poll the incident list every 5 seconds, including empty and all-terminal queues, to discover newly arriving alerts. Poll active incident details every 5 seconds and stop polling terminal incident details. Never optimistically mark an approval/execution successful; render the server-returned state. On `412`, invalidate detail/timeline queries and display “事故已更新，请重新检查建议”。
 
 Timeline items must show event type, actor, time, trace ID, sanitized payload summary, and evidence links. Diagnosis must show confidence as supporting metadata, not a certainty badge. Operators explicitly submit a diagnosed proposal for approval and, only after the server reports `approved`, explicitly start its execution. Use real buttons with keyboard/focus behavior and live-region status for mutations.
 

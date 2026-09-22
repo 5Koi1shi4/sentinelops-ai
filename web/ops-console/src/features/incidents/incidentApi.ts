@@ -94,14 +94,7 @@ export function useIncidents(filters: IncidentFilters) {
             apiFetch<IncidentPage>(`/incidents${queryString(filters)}`, {
                 headers: authorizationHeaders(user?.accessToken),
             }),
-        refetchInterval: (query) => {
-            const incidents = query.state.data?.items ?? [];
-            return incidents.some(
-                (incident) => !terminalStatuses.has(incident.status),
-            )
-                ? 5_000
-                : false;
-        },
+        refetchInterval: 5_000,
     });
 }
 

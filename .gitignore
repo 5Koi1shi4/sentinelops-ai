@@ -8,6 +8,7 @@
 /.toolchains/
 
 # Build and editor output.
+/build/
 **/target/
 **/node_modules/
 **/dist/

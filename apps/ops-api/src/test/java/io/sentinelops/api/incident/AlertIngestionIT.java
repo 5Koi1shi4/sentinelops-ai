@@ -1,8 +1,11 @@
 package io.sentinelops.api.incident;
 
+import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthenticationConverter.API_AUTHORITY;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -18,6 +21,8 @@ import io.sentinelops.api.support.PostgresIntegrationTest;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -28,7 +33,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.JsonNode;
@@ -45,7 +52,9 @@ class AlertIngestionIT extends PostgresIntegrationTest {
 
     @BeforeEach
     void configureMockMvc() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .apply(springSecurity())
+                .build();
     }
 
     @Test
@@ -167,6 +176,28 @@ class AlertIngestionIT extends PostgresIntegrationTest {
     }
 
     @Test
+    void delayedRecoveryAfterResolutionStaysOnTheClosedIncident() {
+        var serviceKey = insertService();
+        var incident = incidents.ingest(
+                alert(serviceKey, "late-recovery", "late-firing", AlertEnvelope.AlertStatus.FIRING));
+        jdbc.sql("update incident set status = 'resolved', resolved_at = now() where id = :id")
+                .param("id", incident.id())
+                .update();
+
+        var recovery = alert(serviceKey, "late-recovery", "late-resolved", AlertEnvelope.AlertStatus.RESOLVED);
+        var recovered = incidents.ingest(recovery);
+        var duplicate = incidents.ingest(recovery);
+
+        assertThat(recovered.id()).isEqualTo(incident.id());
+        assertThat(duplicate.id()).isEqualTo(incident.id());
+        assertThat(recovered.status()).isEqualTo(IncidentStatus.RESOLVED);
+        assertThat(incidentCount(serviceKey, "late-recovery")).isZero();
+        assertThat(jdbc.sql("select count(*) from incident where service_id = :serviceId")
+                .param("serviceId", serviceId(serviceKey)).query(Long.class).single()).isOne();
+        assertThat(eventTypes(incident.id())).containsExactly("alert_received", "alert_recovered");
+    }
+
+    @Test
     void recoveryDuringApprovalAppendsEventButDoesNotResolve() {
         var serviceKey = insertService();
         var incident = incidents.ingest(
@@ -197,13 +228,14 @@ class AlertIngestionIT extends PostgresIntegrationTest {
         incidents.ingest(
                 alert(serviceKey, "detail-fingerprint", "detail-b", AlertEnvelope.AlertStatus.FIRING));
 
-        mockMvc.perform(get("/api/v1/incidents/{id}", incident.id()))
+        mockMvc.perform(get("/api/v1/incidents/{id}", incident.id())
+                        .with(observer(serviceId(serviceKey))))
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"1\""))
-                .andExpect(jsonPath("$.id").value(incident.id().toString()))
-                .andExpect(jsonPath("$.status").value("DETECTED"))
-                .andExpect(jsonPath("$.version").value(1))
-                .andExpect(jsonPath("$.occurrenceCount").value(2));
+                .andExpect(jsonPath("$.incident.id").value(incident.id().toString()))
+                .andExpect(jsonPath("$.incident.status").value("DETECTED"))
+                .andExpect(jsonPath("$.incident.version").value(1))
+                .andExpect(jsonPath("$.incident.occurrenceCount").value(2));
     }
 
     @Test
@@ -218,6 +250,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
         setProjectionOpenedAt(pageBoundary.id(), tiedOpenedAt);
 
         JsonNode firstPage = responseJson(mockMvc.perform(get("/api/v1/incidents")
+                        .with(observer(serviceId(serviceKey)))
                         .param("serviceId", serviceId(serviceKey).toString())
                         .param("pageSize", "1"))
                 .andExpect(status().isOk()));
@@ -232,6 +265,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
         setProjectionOpenedAt(insertedAfterPageOne.id(), Instant.parse("2026-09-20T03:00:00Z"));
 
         JsonNode secondPage = responseJson(mockMvc.perform(get("/api/v1/incidents")
+                        .with(observer(serviceId(serviceKey)))
                         .param("serviceId", serviceId(serviceKey).toString())
                         .param("pageSize", "1")
                         .param("cursor", cursor))
@@ -302,6 +336,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
                 .put("severity", "sev1");
 
         mockMvc.perform(post("/api/v1/integrations/alertmanager/webhook")
+                        .with(observer(serviceId(serviceKey)))
                         .header("X-SentinelOps-Source", "demo-alertmanager")
                         .header("X-SentinelOps-Event-Id", "webhook-delivery-a")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -326,6 +361,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
         payload.putArray("alerts");
 
         mockMvc.perform(post("/api/v1/integrations/alertmanager/webhook")
+                        .with(observer(serviceId(serviceKey)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(payload)))
                 .andExpect(status().isBadRequest())
@@ -346,6 +382,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
 
         JsonNode firstPage = responseJson(mockMvc.perform(get(
                                 "/api/v1/incidents/{id}/timeline", incident.id())
+                        .with(observer(serviceId(serviceKey)))
                         .param("pageSize", "2"))
                 .andExpect(status().isOk()));
         assertThat(firstPage.path("items").size()).isEqualTo(2);
@@ -354,6 +391,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
 
         JsonNode secondPage = responseJson(mockMvc.perform(get(
                                 "/api/v1/incidents/{id}/timeline", incident.id())
+                        .with(observer(serviceId(serviceKey)))
                         .param("pageSize", "2")
                         .param("cursor", firstPage.path("nextCursor").asString()))
                 .andExpect(status().isOk()));
@@ -364,7 +402,9 @@ class AlertIngestionIT extends PostgresIntegrationTest {
 
     @Test
     void invalidCursorReturnsProblemDetailsWithErrorCodeAndTraceId() throws Exception {
-        mockMvc.perform(get("/api/v1/incidents").param("cursor", "not-base64"))
+        mockMvc.perform(get("/api/v1/incidents")
+                        .with(platformAdmin())
+                        .param("cursor", "not-base64"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errorCode").value("invalid_pagination"))
@@ -381,6 +421,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
                 .encodeToString("{\"sequence\":\"1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         mockMvc.perform(get("/api/v1/incidents/{id}/timeline", incident.id())
+                        .with(observer(serviceId(serviceKey)))
                         .param("cursor", cursor))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("invalid_pagination"));
@@ -403,6 +444,7 @@ class AlertIngestionIT extends PostgresIntegrationTest {
                 AlertEnvelope.AlertStatus.FIRING));
 
         mockMvc.perform(get("/api/v1/incidents")
+                        .with(observer(serviceId(serviceKey)))
                         .param("serviceId", serviceId(serviceKey).toString())
                         .param("severity", "SEV1"))
                 .andExpect(status().isOk())
@@ -412,7 +454,9 @@ class AlertIngestionIT extends PostgresIntegrationTest {
 
     @Test
     void invalidParameterTypeReturnsProblemDetails() throws Exception {
-        mockMvc.perform(get("/api/v1/incidents").param("serviceId", "not-a-uuid"))
+        mockMvc.perform(get("/api/v1/incidents")
+                        .with(platformAdmin())
+                        .param("serviceId", "not-a-uuid"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errorCode").value("invalid_request"))
@@ -559,5 +603,29 @@ class AlertIngestionIT extends PostgresIntegrationTest {
     private JsonNode responseJson(org.springframework.test.web.servlet.ResultActions action)
             throws Exception {
         return objectMapper.readTree(action.andReturn().getResponse().getContentAsByteArray());
+    }
+
+    private RequestPostProcessor observer(UUID serviceId) {
+        return jwt().authorities(
+                        new SimpleGrantedAuthority(API_AUTHORITY),
+                        new SimpleGrantedAuthority("ROLE_OBSERVER"))
+                .jwt(token -> token
+                        .issuer("https://issuer.sentinelops.test")
+                        .subject("observer-" + serviceId)
+                        .audience(List.of("sentinelops-api"))
+                        .claim("realm_access", Map.of("roles", List.of("observer")))
+                        .claim("service_ids", List.of(serviceId.toString())));
+    }
+
+    private RequestPostProcessor platformAdmin() {
+        return jwt().authorities(
+                        new SimpleGrantedAuthority(API_AUTHORITY),
+                        new SimpleGrantedAuthority("ROLE_PLATFORM_ADMIN"))
+                .jwt(token -> token
+                        .issuer("https://issuer.sentinelops.test")
+                        .subject("platform-admin")
+                        .audience(List.of("sentinelops-api"))
+                        .claim("realm_access", Map.of("roles", List.of("platform_admin")))
+                        .claim("service_ids", List.of()));
     }
 }

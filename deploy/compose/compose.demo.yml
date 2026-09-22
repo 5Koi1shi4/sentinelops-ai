@@ -1,0 +1,133 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${SENTINELOPS_KEYCLOAK_ADMIN_PASSWORD:-sentinelops-demo-admin}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      SENTINELOPS_DEMO_EXECUTOR_CLIENT_SECRET: ${SENTINELOPS_DEMO_EXECUTOR_CLIENT_SECRET:-sentinelops-demo-executor-secret}
+      SENTINELOPS_DEMO_CONTROLLER_CLIENT_SECRET: ${SENTINELOPS_DEMO_CONTROLLER_CLIENT_SECRET:-sentinelops-demo-controller-secret}
+    volumes:
+      - ../keycloak/sentinelops-realm.json:/opt/keycloak/data/import/sentinelops-realm.json:ro
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks: [control-plane, edge]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q UP <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 25s
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+
+  demo-service:
+    build:
+      context: ../..
+      dockerfile: apps/demo-service/Dockerfile
+    environment:
+      SENTINELOPS_DEMO_MODE: "true"
+      SENTINELOPS_DEMO_JWKS_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/certs
+      SENTINELOPS_DEMO_ISSUER: http://localhost:8081/realms/sentinelops
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks: [control-plane, observability]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8082/actuator/health/readiness | grep -q '\"status\":\"UP\"'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  prometheus:
+    image: prom/prometheus:v3.13.3
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      demo-service:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+    networks: [observability, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/ready | grep -q Ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks: [control-plane, observability, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9093/-/ready | grep -q OK"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  ops-api:
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  ops-executor:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      demo-service:
+        condition: service_healthy
+      ops-api:
+        condition: service_healthy
+
+networks:
+  observability:
+    internal: true
+
+volumes:
+  prometheus_data:
+  alertmanager_data:

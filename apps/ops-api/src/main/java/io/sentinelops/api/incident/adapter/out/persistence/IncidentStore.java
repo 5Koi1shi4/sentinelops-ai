@@ -92,6 +92,33 @@ public class IncidentStore {
                 .single();
     }
 
+    public Optional<AllocatedIncident> allocateRecovery(UUID serviceId, String fingerprint, Instant now) {
+        return jdbc.sql("""
+                        with existing as (
+                          select id from incident
+                          where service_id = :serviceId and fingerprint = :fingerprint
+                          order by opened_at desc, id desc
+                          limit 1 for update
+                        )
+                        update incident set
+                          occurrence_count = occurrence_count + 1,
+                          updated_at = :now,
+                          next_event_seq = next_event_seq + 1,
+                          version = version + 1
+                        where id = (select id from existing)
+                        returning id, status, version, next_event_seq - 1 as allocated_seq
+                        """)
+                .param("serviceId", serviceId)
+                .param("fingerprint", fingerprint)
+                .param("now", databaseTimestamp(now))
+                .query((resultSet, rowNumber) -> new AllocatedIncident(
+                        resultSet.getObject("id", UUID.class),
+                        IncidentStatus.fromDatabase(resultSet.getString("status")),
+                        resultSet.getLong("version"),
+                        resultSet.getLong("allocated_seq")))
+                .optional();
+    }
+
     public int appendSourceEvent(
             UUID eventId,
             AllocatedIncident incident,
@@ -121,6 +148,41 @@ public class IncidentStore {
                 .param("sourceEventId", sourceEventId)
                 .param("payload", payloadJson)
                 .param("occurredAt", databaseTimestamp(occurredAt))
+                .update();
+    }
+
+    public int insertEvidenceIfAbsent(
+            UUID evidenceId,
+            UUID incidentId,
+            String sourceType,
+            String sourceRef,
+            String querySpecJson,
+            String redactedPayloadJson,
+            String contentHash,
+            Instant capturedAt) {
+        return jdbc.sql("""
+                        insert into evidence_snapshot(
+                          id, incident_id, source_type, source_ref, query_spec,
+                          redacted_payload, content_hash, captured_at, truncated
+                        )
+                        select :id, :incidentId, :sourceType, :sourceRef,
+                               cast(:querySpec as jsonb), cast(:redactedPayload as jsonb),
+                               :contentHash, :capturedAt, false
+                        where not exists (
+                          select 1 from evidence_snapshot
+                          where incident_id = :incidentId
+                            and source_type = :sourceType
+                            and source_ref = :sourceRef
+                        )
+                        """)
+                .param("id", evidenceId)
+                .param("incidentId", incidentId)
+                .param("sourceType", sourceType)
+                .param("sourceRef", sourceRef)
+                .param("querySpec", querySpecJson)
+                .param("redactedPayload", redactedPayloadJson)
+                .param("contentHash", contentHash)
+                .param("capturedAt", databaseTimestamp(capturedAt))
                 .update();
     }
 

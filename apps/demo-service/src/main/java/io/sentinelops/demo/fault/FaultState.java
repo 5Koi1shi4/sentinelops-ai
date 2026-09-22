@@ -1,5 +1,6 @@
 package io.sentinelops.demo.fault;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
@@ -14,11 +15,15 @@ public final class FaultState {
     private final AtomicReference<FaultMode> mode =
             new AtomicReference<>(FaultMode.NONE);
     private final Map<String, RecoveryRecord> recoveries = new HashMap<>();
+    private final Counter recoverySideEffects;
 
     public FaultState(MeterRegistry meters) {
         Gauge.builder("demo_fault_active", mode, current ->
                         current.get() == FaultMode.NONE ? 0.0 : 1.0)
                 .description("Whether the controlled Demo fault is active")
+                .register(meters);
+        recoverySideEffects = Counter.builder("demo.recovery.side.effect")
+                .description("Number of recovery actions that changed Demo service state")
                 .register(meters);
     }
 
@@ -53,6 +58,9 @@ public final class FaultState {
         }
 
         boolean changed = mode.getAndSet(FaultMode.NONE) != FaultMode.NONE;
+        if (changed) {
+            recoverySideEffects.increment();
+        }
         recoveries.put(key, new RecoveryRecord(fencingToken, changed));
         return new RecoveryResult(changed, fencingToken, false);
     }
