@@ -103,8 +103,44 @@ npm --prefix web/ops-console run api:check
 
 独立 Spec/Quality 审查通过，最终租约 P1 已闭环，未发现剩余 P1/P2；`git diff --check` 通过。
 
+## Task 5：可复现 AI Eval
+
+实现 12 个固定事故场景、规则评分、运行/读取 API、基线对比和发布阈值。操作说明见 [AI Eval 运行与基线](ai-evaluation.md)。运行与读取仅限 `PLATFORM_ADMIN`，请求不能覆盖模型配置、工具或文件路径。
+
+- 复用生产 ModelGateway、只读工具和 DiagnosisPolicy，通过窄范围 `diagnosis::evaluation` 接口绑定离线证据、Runbook 和固定检索 fixture；不会改写真实事故、诊断或证据。固定检索不代表线上混合检索质量验收。
+- V15 固定数据集、case、逐例结果及运行身份/配置，终态不可修改。复合外键保证结果与运行属于同一数据集；数据库拒绝旧 owner、过期租约、缺失 case 的完成操作和已运行数据集追加 case。
+- 模型调用在数据库事务外执行，每例独立持久化，最多六次工具调用、90 秒；运行具有 120 秒可续租租约和 20 分钟总时限。进行中返回幂等冲突，完成后重放原结果；满容量只拒绝新运行，不阻断既有命令重放，也不留下孤儿命令。
+- 聚合使用固定 expectation 决定安全/根因分母，任何非预期错误或不完整覆盖都阻止发布。保存模型/prompt/tool schema/fixture/规则版本及费用单价指纹，价格或用量不可得时明确标记费用不可用。
+- 两次实际 deterministic 运行生成完整稳定投影，递归排序 JSON 后逐字节比较，并校验已提交基线的 UTF-8/LF 字节。模型标识来自服务器配置，真实供应商需固定 snapshot/tag；不声称能从通用兼容协议获知供应商服务软件版本。
+
+当前基线如实反映 Demo 模型的局限，`releaseAllowed=false`：
+
+| 指标 | 基线 | 发布要求 |
+| --- | ---: | ---: |
+| 引用可解析率 | 91.67% | 100% |
+| 危险动作拦截率 | 71.43% | 100% |
+| Runbook 准确率 | 83.33% | ≥85% |
+| 根因 Top-3 准确率 | 20% | ≥80% |
+| 虚构工具/Runbook 计数 | 0 | 0 |
+
+红—绿证据：`build/task5-red.log` 与 `task5-rules-red.log` 验证缺失实现；`task5-http-citation-red.log` 复现缺失路由与预期拒绝的引用评分问题；`task5-first-green.log` 暴露多个数据库时钟调用造成的微秒级 deadline 约束冲突，已统一使用 statement_timestamp；`task5-focused.log` 暴露跨模块接口未声明，修正后的 `task5-boundary.log` 7 项通过；`task5-review-red.log` 复现满容量重放和仅含换行的空数据集问题。
+
+审查修正后的专项日志 `build/task5-reviewed-focused.log`：29 项通过，无失败或跳过。包含真实 PostgreSQL 17 + pgvector 的隔离、不可变性、HTTP 权限和并发验收。`build/task5-final-api-contract.log` 的生成类型检查与 `build/task5-web-build.log` 的前端生产构建通过。
+
+完整回归发现旧 `RunbookPublishingIT` 在应用启动后才为 MockitoBean 设置 Embedding 模型标识，与启动时生成的 Eval 配置指纹不兼容。测试改用 MockitoSpyBean 保留真实确定性模型标识，向量调用仍按场景模拟，未放宽生产校验。`build/task5-publishing-context-red.log` 保存原始失败；修正后的 `build/task5-publishing-context-green.log` 17 项通过。中断的回归日志另存，不计入通过结果。
+
+最终后端验收（Java 21，关闭基线更新开关）：
+
+```powershell
+.\mvnw.cmd -B -ntp '-Dtest=*Test,*Tests,*IT' '-Dsurefire.failIfNoSpecifiedTests=false' verify
+```
+
+`build/task5-final-all.log`：三应用构建成功，368 项通过（API 329、Executor 29、Demo 10），无失败或跳过。JAR 内的 12-case 数据集与源文件逐字节一致。独立 Spec/Quality 复审通过，未发现剩余已确认的 P1/P2。未调用付费模型、接入组织真实监控、重跑浏览器 E2E 或推送/部署远程。
+
+Dockerfile 已补充复制 `evals/datasets`，避免只在本地 Maven 构建时存在数据集。`build/task5-docker-build.log` 的本地 API 镜像构建通过；`build/task5-docker-resource-check.log` 证明无网络一次性容器可在最终镜像 JAR 中找到数据集。该检查不启动业务服务，也不等同于完整部署验收。
+
 ## 下一实施任务
 
-下一项为 Task 5：可复现 AI Eval 数据集、运行记录与发布阈值。随后按计划推进治理界面、身份审计及 Stage 2A 总体验收。
+Task 5 已完成，下一项为 Task 6：Runbook、证据与 Eval 治理界面。随后按计划推进身份审计及 Stage 2A 总体验收。
 
 当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入在 Task 4 / 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。

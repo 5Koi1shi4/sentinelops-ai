@@ -1,7 +1,7 @@
 package io.sentinelops.api.diagnosis.application.tool;
 
 import io.sentinelops.api.incident.application.evidence.EvidenceBudget;
-import io.sentinelops.api.incident.application.evidence.EvidenceCaptureService;
+import io.sentinelops.api.incident.application.evidence.EvidenceCapture;
 import io.sentinelops.api.incident.application.evidence.EvidencePlan;
 import io.sentinelops.api.incident.application.evidence.EvidenceRequest;
 import java.util.HashSet;
@@ -24,7 +24,7 @@ public final class EvidenceTools {
 
     private final List<ReadOnlyTool> readOnlyTools;
 
-    public EvidenceTools(EvidenceCaptureService capture, EvidenceBudget budget) {
+    public EvidenceTools(EvidenceCapture capture, EvidenceBudget budget) {
         Objects.requireNonNull(capture, "capture");
         Objects.requireNonNull(budget, "budget");
         this.readOnlyTools = List.of(
@@ -51,7 +51,7 @@ public final class EvidenceTools {
     }
 
     static ToolResult capture(
-            EvidenceCaptureService capture,
+            EvidenceCapture capture,
             EvidenceBudget budget,
             String sourceType,
             JsonNode input,
@@ -74,7 +74,7 @@ public final class EvidenceTools {
     }
 
     static ToolResult getEvidence(
-            EvidenceCaptureService capture,
+            EvidenceCapture capture,
             JsonNode input,
             ToolContext context) {
         Objects.requireNonNull(capture, "capture");

@@ -12,7 +12,7 @@ import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
 
 @Repository
-public class RunbookCatalog {
+public class RunbookCatalog implements RunbookLookup {
 
     private static final String SELECT_VERSION = """
             select rv.id, rv.runbook_id, r.runbook_key, r.service_id,

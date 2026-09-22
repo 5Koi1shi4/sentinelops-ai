@@ -1,17 +1,17 @@
 package io.sentinelops.api.diagnosis.application.tool;
 
 import io.sentinelops.api.incident.application.evidence.EvidenceBudget;
-import io.sentinelops.api.incident.application.evidence.EvidenceCaptureService;
+import io.sentinelops.api.incident.application.evidence.EvidenceCapture;
 import java.util.Objects;
 import tools.jackson.databind.JsonNode;
 
 /** Read-only Loki evidence tool. */
 public final class LogReadTool implements ReadOnlyTool {
 
-    private final EvidenceCaptureService capture;
+    private final EvidenceCapture capture;
     private final EvidenceBudget budget;
 
-    public LogReadTool(EvidenceCaptureService capture, EvidenceBudget budget) {
+    public LogReadTool(EvidenceCapture capture, EvidenceBudget budget) {
         this.capture = Objects.requireNonNull(capture, "capture");
         this.budget = Objects.requireNonNull(budget, "budget");
     }

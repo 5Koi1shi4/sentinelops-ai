@@ -2,6 +2,7 @@ FROM maven:3.9.11-eclipse-temurin-21 AS build
 WORKDIR /workspace
 COPY pom.xml ./
 COPY apps ./apps
+COPY evals/datasets ./evals/datasets
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -pl apps/ops-api -am -Dmaven.test.skip=true package
 

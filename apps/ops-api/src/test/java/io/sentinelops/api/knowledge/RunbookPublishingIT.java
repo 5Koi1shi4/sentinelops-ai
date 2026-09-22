@@ -17,7 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
@@ -26,12 +26,11 @@ class RunbookPublishingIT extends PostgresIntegrationTest {
     @Autowired RunbookApplicationService runbooks;
     @Autowired JdbcClient jdbc;
     @Autowired ObjectMapper json;
-    @MockitoBean EmbeddingGateway embeddings;
+    @MockitoSpyBean EmbeddingGateway embeddings;
     final CurrentPrincipal author = principal("writer");
     final CurrentPrincipal reviewer = principal("reviewer");
 
     @BeforeEach void embeddingProvider() {
-        when(embeddings.modelId()).thenReturn("deterministic-sha256-v1");
         doAnswer(call -> {
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
             return new DeterministicEmbeddingGateway().embed(call.getArgument(0));

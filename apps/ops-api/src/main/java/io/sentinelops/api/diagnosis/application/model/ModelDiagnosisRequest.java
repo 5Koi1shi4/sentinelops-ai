@@ -4,6 +4,7 @@ import io.sentinelops.api.diagnosis.domain.DiagnosisContext;
 import io.sentinelops.api.diagnosis.application.tool.ToolContext;
 import java.util.Objects;
 
+@org.springframework.modulith.NamedInterface("evaluation")
 public record ModelDiagnosisRequest(DiagnosisContext context, ToolContext toolContext,
                                    String promptVersion, ToolBudget budget) {
     public ModelDiagnosisRequest {

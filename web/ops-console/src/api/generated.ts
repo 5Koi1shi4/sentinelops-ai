@@ -328,6 +328,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/eval-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the reproducible AI evaluation dataset
+         * @description Starts a persisted, reproducible evaluation run using the frozen dataset, model identity, prompt, toolset, and Runbook corpus snapshot. Only PLATFORM_ADMIN principals may create an evaluation run.
+         */
+        post: operations["createEvalRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Immutable evaluation run identifier. */
+                id: components["parameters"]["EvalRunId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a persisted AI evaluation run
+         * @description Returns the immutable run configuration, aggregate metrics, case scores, and baseline comparison.
+         */
+        get: operations["getEvalRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -476,6 +519,108 @@ export interface components {
             lexicalScore: number | null;
             vectorScore: number | null;
             fusedScore: number;
+        };
+        EvalRunRequest: {
+            /** @description Immutable dataset key to evaluate. */
+            datasetKey: string;
+            /**
+             * Format: uuid
+             * @description Optional completed run from the same scoring and policy snapshot.
+             */
+            baselineRunId: string | null;
+        };
+        EvalRunView: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "running" | "completed" | "failed";
+            provider: string;
+            modelName: string;
+            /** Format: uuid */
+            datasetId: string;
+            datasetChecksum: string;
+            /** @description Frozen provider, prompt, toolset, corpus, and evaluation configuration snapshot. */
+            runConfig: {
+                [key: string]: unknown;
+            };
+            aggregateMetrics: components["schemas"]["EvalAggregateMetrics"];
+            /** @description Null while a run is running; false for failed or threshold-rejected runs. */
+            releaseAllowed: boolean | null;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            completedAt: string | null;
+            results: components["schemas"]["EvalCaseResult"][];
+            comparison: {
+                /** Format: uuid */
+                baselineRunId: string;
+                metricDeltas: {
+                    citationResolvableRate?: number;
+                    dangerousActionBlockRate?: number;
+                    runbookAccuracy?: number;
+                    rootCauseTop3Accuracy?: number;
+                    /** Format: int64 */
+                    fictionalToolCount?: number;
+                } & {
+                    [key: string]: unknown;
+                };
+                changedCaseKeys: string[];
+                configurationDifferences: string[];
+            } | null;
+        };
+        EvalCaseResult: {
+            /** Format: uuid */
+            caseId: string;
+            caseKey: string;
+            /** @enum {string} */
+            status: "passed" | "failed" | "error";
+            proposalHash: string | null;
+            scores: components["schemas"]["EvalScores"];
+            failureCode: string | null;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            latencyMs: number;
+            /** Format: int64 */
+            costMicros: number;
+        };
+        EvalScores: {
+            citationResolvable: boolean;
+            dangerousActionBlocked: boolean;
+            runbookCorrect: boolean;
+            rootCauseTop3Correct: boolean;
+            /** Format: int32 */
+            fictionalToolCount: number;
+            safetyApplicable: boolean;
+            rootCauseApplicable: boolean;
+        };
+        /** @description Aggregate metrics or a failure snapshot when the run cannot complete. */
+        EvalAggregateMetrics: {
+            citationResolvableRate?: number;
+            dangerousActionBlockRate?: number;
+            runbookAccuracy?: number;
+            rootCauseTop3Accuracy?: number;
+            /** Format: int64 */
+            fictionalToolCount?: number;
+            /** Format: int64 */
+            caseCount?: number;
+            /** Format: int64 */
+            expectedCaseCount?: number;
+            /** Format: int64 */
+            inputTokens?: number;
+            /** Format: int64 */
+            outputTokens?: number;
+            /** Format: int64 */
+            latencyMs?: number;
+            /** Format: int64 */
+            costMicros?: number;
+            costAvailable?: boolean;
+            thresholdFailures?: string[];
+            failureCode?: string;
+        } & {
+            [key: string]: unknown;
         };
         ProblemDetail: {
             /** Format: uri */
@@ -800,6 +945,8 @@ export interface components {
         IncidentId: string;
         RunbookKey: string;
         RunbookVersionId: string;
+        /** @description Immutable evaluation run identifier. */
+        EvalRunId: string;
         /** @description Opaque cursor returned by the preceding page. */
         Cursor: string;
         PageSize: number;
@@ -1389,6 +1536,96 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    createEvalRun: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Evaluation run created or returned from an idempotent replay; its status is completed or failed. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The requested evaluation dataset or baseline run does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description The idempotency key is already running, has been reused with a different request, or the requested baseline is incompatible. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description The configured provider is manual-only or evaluation capacity is exhausted. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+        };
+    };
+    getEvalRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Immutable evaluation run identifier. */
+                id: components["parameters"]["EvalRunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted evaluation run view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The requested evaluation run does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
         };
     };
 }

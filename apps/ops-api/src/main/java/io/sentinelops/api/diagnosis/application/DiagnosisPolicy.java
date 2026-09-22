@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 @Component
+@org.springframework.modulith.NamedInterface("evaluation")
 public class DiagnosisPolicy {
 
     public ValidatedDiagnosisProposal validate(

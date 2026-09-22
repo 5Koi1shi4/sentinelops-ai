@@ -10,6 +10,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Component
+@org.springframework.modulith.NamedInterface("evaluation")
 public class ProposalHasher {
 
     private final ObjectMapper objectMapper;

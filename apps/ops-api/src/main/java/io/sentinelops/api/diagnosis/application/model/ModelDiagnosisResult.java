@@ -3,6 +3,7 @@ package io.sentinelops.api.diagnosis.application.model;
 import io.sentinelops.api.diagnosis.domain.DiagnosisProposalDraft;
 import java.util.Objects;
 
+@org.springframework.modulith.NamedInterface("evaluation")
 public record ModelDiagnosisResult(DiagnosisProposalDraft proposal, String provider, String modelName,
                                   String promptVersion, String runbookCorpusVersion, String inputHash,
                                   String responseHash, long inputTokens, long outputTokens, int toolCallCount,

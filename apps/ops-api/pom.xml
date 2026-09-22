@@ -126,6 +126,14 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource><directory>src/main/resources</directory></resource>
+            <resource>
+                <directory>../../evals</directory>
+                <targetPath>evals</targetPath>
+                <includes><include>datasets/*.jsonl</include></includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

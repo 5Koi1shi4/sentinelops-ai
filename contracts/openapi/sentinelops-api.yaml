@@ -16,6 +16,7 @@ tags:
   - name: Executions
   - name: Integrations
   - name: Runbooks
+  - name: Evaluations
 
 paths:
   /incidents:
@@ -681,6 +682,85 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /eval-runs:
+    post:
+      operationId: createEvalRun
+      tags: [Evaluations]
+      summary: Run the reproducible AI evaluation dataset
+      description: >-
+        Starts a persisted, reproducible evaluation run using the frozen dataset,
+        model identity, prompt, toolset, and Runbook corpus snapshot. Only
+        PLATFORM_ADMIN principals may create an evaluation run.
+      x-required-roles: [PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvalRunRequest"
+      responses:
+        "201":
+          description: Evaluation run created or returned from an idempotent replay; its status is completed or failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalRunView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The requested evaluation dataset or baseline run does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: >-
+            The idempotency key is already running, has been reused with a
+            different request, or the requested baseline is incompatible.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "503":
+          description: The configured provider is manual-only or evaluation capacity is exhausted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /eval-runs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/EvalRunId"
+    get:
+      operationId: getEvalRun
+      tags: [Evaluations]
+      summary: Read a persisted AI evaluation run
+      description: Returns the immutable run configuration, aggregate metrics, case scores, and baseline comparison.
+      x-required-roles: [PLATFORM_ADMIN]
+      responses:
+        "200":
+          description: Persisted evaluation run view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalRunView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The requested evaluation run does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -709,6 +789,14 @@ components:
       name: id
       in: path
       required: true
+      schema:
+        type: string
+        format: uuid
+    EvalRunId:
+      name: id
+      in: path
+      required: true
+      description: Immutable evaluation run identifier.
       schema:
         type: string
         format: uuid
@@ -1115,6 +1203,243 @@ components:
         fusedScore:
           type: number
           minimum: 0
+
+    EvalRunRequest:
+      type: object
+      additionalProperties: false
+      required: [datasetKey, baselineRunId]
+      properties:
+        datasetKey:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: '^[a-z][a-z0-9-]{0,79}$'
+          description: Immutable dataset key to evaluate.
+        baselineRunId:
+          type: [string, "null"]
+          format: uuid
+          description: Optional completed run from the same scoring and policy snapshot.
+
+    EvalRunView:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - provider
+        - modelName
+        - datasetId
+        - datasetChecksum
+        - runConfig
+        - aggregateMetrics
+        - releaseAllowed
+        - startedAt
+        - completedAt
+        - results
+        - comparison
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, completed, failed]
+        provider:
+          type: string
+        modelName:
+          type: string
+        datasetId:
+          type: string
+          format: uuid
+        datasetChecksum:
+          type: string
+        runConfig:
+          type: object
+          description: Frozen provider, prompt, toolset, corpus, and evaluation configuration snapshot.
+          additionalProperties: true
+        aggregateMetrics:
+          $ref: "#/components/schemas/EvalAggregateMetrics"
+        releaseAllowed:
+          type: [boolean, "null"]
+          description: Null while a run is running; false for failed or threshold-rejected runs.
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        results:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EvalCaseResult"
+        comparison:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [baselineRunId, metricDeltas, changedCaseKeys, configurationDifferences]
+          properties:
+            baselineRunId:
+              type: string
+              format: uuid
+            metricDeltas:
+              type: object
+              additionalProperties: true
+              properties:
+                citationResolvableRate:
+                  type: number
+                dangerousActionBlockRate:
+                  type: number
+                runbookAccuracy:
+                  type: number
+                rootCauseTop3Accuracy:
+                  type: number
+                fictionalToolCount:
+                  type: integer
+                  format: int64
+            changedCaseKeys:
+              type: array
+              maxItems: 100
+              items:
+                type: string
+            configurationDifferences:
+              type: array
+              maxItems: 100
+              items:
+                type: string
+
+    EvalCaseResult:
+      type: object
+      additionalProperties: false
+      required:
+        - caseId
+        - caseKey
+        - status
+        - proposalHash
+        - scores
+        - failureCode
+        - inputTokens
+        - outputTokens
+        - latencyMs
+        - costMicros
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        caseKey:
+          type: string
+        status:
+          type: string
+          enum: [passed, failed, error]
+        proposalHash:
+          type: [string, "null"]
+        scores:
+          $ref: "#/components/schemas/EvalScores"
+        failureCode:
+          type: [string, "null"]
+        inputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        outputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        latencyMs:
+          type: integer
+          format: int64
+          minimum: 0
+        costMicros:
+          type: integer
+          format: int64
+          minimum: 0
+
+    EvalScores:
+      type: object
+      additionalProperties: false
+      required:
+        - citationResolvable
+        - dangerousActionBlocked
+        - runbookCorrect
+        - rootCauseTop3Correct
+        - fictionalToolCount
+        - safetyApplicable
+        - rootCauseApplicable
+      properties:
+        citationResolvable:
+          type: boolean
+        dangerousActionBlocked:
+          type: boolean
+        runbookCorrect:
+          type: boolean
+        rootCauseTop3Correct:
+          type: boolean
+        fictionalToolCount:
+          type: integer
+          format: int32
+          minimum: 0
+        safetyApplicable:
+          type: boolean
+        rootCauseApplicable:
+          type: boolean
+
+    EvalAggregateMetrics:
+      type: object
+      description: Aggregate metrics or a failure snapshot when the run cannot complete.
+      additionalProperties: true
+      properties:
+        citationResolvableRate:
+          type: number
+          minimum: 0
+          maximum: 1
+        dangerousActionBlockRate:
+          type: number
+          minimum: 0
+          maximum: 1
+        runbookAccuracy:
+          type: number
+          minimum: 0
+          maximum: 1
+        rootCauseTop3Accuracy:
+          type: number
+          minimum: 0
+          maximum: 1
+        fictionalToolCount:
+          type: integer
+          format: int64
+          minimum: 0
+        caseCount:
+          type: integer
+          format: int64
+          minimum: 0
+        expectedCaseCount:
+          type: integer
+          format: int64
+          minimum: 0
+        inputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        outputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        latencyMs:
+          type: integer
+          format: int64
+          minimum: 0
+        costMicros:
+          type: integer
+          format: int64
+          minimum: 0
+        costAvailable:
+          type: boolean
+        thresholdFailures:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        failureCode:
+          type: string
 
     ProblemDetail:
       type: object

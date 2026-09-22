@@ -1,15 +1,15 @@
 package io.sentinelops.api.diagnosis.application.tool;
 
-import io.sentinelops.api.incident.application.evidence.EvidenceCaptureService;
+import io.sentinelops.api.incident.application.evidence.EvidenceCapture;
 import java.util.Objects;
 import tools.jackson.databind.JsonNode;
 
 /** Read-only frozen evidence lookup tool. */
 public final class EvidenceReadTool implements ReadOnlyTool {
 
-    private final EvidenceCaptureService capture;
+    private final EvidenceCapture capture;
 
-    public EvidenceReadTool(EvidenceCaptureService capture) {
+    public EvidenceReadTool(EvidenceCapture capture) {
         this.capture = Objects.requireNonNull(capture, "capture");
     }
 

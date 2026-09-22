@@ -7,6 +7,7 @@ import java.util.TreeMap;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+@org.springframework.modulith.NamedInterface("evaluation")
 public final class ModelPayloadHash {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private ModelPayloadHash() {}

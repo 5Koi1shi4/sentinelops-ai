@@ -3,6 +3,7 @@ package io.sentinelops.api.diagnosis.application.model;
 import java.time.Duration;
 import java.util.Objects;
 
+@org.springframework.modulith.NamedInterface("evaluation")
 public record ToolBudget(int maxTotalCalls, Duration maxDuration) {
     public ToolBudget {
         Objects.requireNonNull(maxDuration, "maxDuration");

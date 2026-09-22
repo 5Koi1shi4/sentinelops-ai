@@ -5,7 +5,7 @@ import io.sentinelops.api.diagnosis.domain.DiagnosisEvidence;
 import io.sentinelops.api.diagnosis.domain.DiagnosisProposalDraft;
 import io.sentinelops.api.diagnosis.domain.Hypothesis;
 import io.sentinelops.api.diagnosis.domain.VerificationExpectation;
-import io.sentinelops.api.knowledge.application.RunbookCatalog;
+import io.sentinelops.api.knowledge.application.RunbookLookup;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -22,9 +22,9 @@ public class DeterministicDiagnosisEngine implements DiagnosisEngine {
     private static final String PENDING_METRIC = "db_pool_pending";
     private static final String TIMEOUT_METRIC = "acquire_timeout_count";
 
-    private final RunbookCatalog runbooks;
+    private final RunbookLookup runbooks;
 
-    public DeterministicDiagnosisEngine(RunbookCatalog runbooks) {
+    public DeterministicDiagnosisEngine(RunbookLookup runbooks) {
         this.runbooks = runbooks;
     }
 

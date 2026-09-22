@@ -3,6 +3,7 @@ package io.sentinelops.api.diagnosis.adapter.out.model;
 import io.micrometer.observation.ObservationRegistry;
 import io.sentinelops.api.diagnosis.application.*;
 import io.sentinelops.api.diagnosis.application.model.ModelGateway;
+import io.sentinelops.api.diagnosis.application.model.ModelGatewayFactory;
 import io.sentinelops.api.diagnosis.application.tool.EvidenceTools;
 import io.sentinelops.api.incident.application.evidence.*;
 import io.sentinelops.api.knowledge.application.*;
@@ -38,6 +39,38 @@ public class ModelProviderConfiguration {
     @Bean DiagnosisEngine diagnosisEngine(ModelGateway gateway) { return new ModelBackedDiagnosisEngine(gateway); }
     @Bean ModelGateway modelGateway(ProviderSettings settings, RunbookCatalog catalog, DiagnosisToolConfiguration tools,
                                     ToolCallingManager manager,ObservationRegistry observations) {
+        return createGateway(settings, catalog, tools, manager, observations);
+    }
+
+    @Bean ModelGatewayFactory modelGatewayFactory(ProviderSettings settings, EmbeddingGateway embeddings,
+            ToolCallingManager manager, ObservationRegistry observations, ObjectMapper mapper) {
+        String prompt;
+        try { prompt=new org.springframework.core.io.ClassPathResource("prompts/diagnosis-system-v1.st")
+                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8); }
+        catch(java.io.IOException failure) { throw new IllegalStateException("Diagnosis prompt unavailable"); }
+        String promptHash=io.sentinelops.api.diagnosis.application.model.ModelPayloadHash.hash(prompt);
+        String toolsetHash=io.sentinelops.api.diagnosis.application.model.ModelPayloadHash.hash(
+                Map.of("version","read-tools-v1","schemas",DiagnosisToolConfiguration.schemas(),
+                        "maxCalls",6,"maxSeconds",90,"maxInputBytes",8192,"maxOutputBytes",1048576));
+        String configHash=io.sentinelops.api.diagnosis.application.model.ModelPayloadHash.hash(
+                Map.of("provider",settings.provider(),"endpoint",Objects.toString(settings.baseUrl(),"local"),
+                        "model",Objects.toString(settings.model(),"deterministic-v1"),"embedding",embeddings.modelId(),
+                        "maxOutputTokens",4096,"retries",0));
+        return new ModelGatewayFactory() {
+            @Override public Descriptor descriptor() {
+                return new Descriptor(settings.provider(), settings.model() == null ? settings.provider()+"-v1" : settings.model(),
+                        "diagnosis-system-v1", "read-tools-v1", embeddings.modelId(),promptHash,toolsetHash,configHash);
+            }
+            @Override public Session open(EvidenceCapture evidence, RunbookLookup catalog, KnowledgeSearch search) {
+                var callbacks = new DiagnosisToolConfiguration(new EvidenceTools(evidence,
+                        new EvidenceBudget(200, 128*1024, Duration.ofMinutes(15))), search, embeddings, catalog, mapper);
+                return new Session(createGateway(settings, catalog, callbacks, manager, observations));
+            }
+        };
+    }
+
+    private ModelGateway createGateway(ProviderSettings settings, RunbookLookup catalog, DiagnosisToolConfiguration tools,
+            ToolCallingManager manager, ObservationRegistry observations) {
         return switch(settings.provider()) {
             case "deterministic" -> new DeterministicModelGateway(new DeterministicDiagnosisEngine(catalog));
             case "manual-only" -> new UnavailableModelGateway();

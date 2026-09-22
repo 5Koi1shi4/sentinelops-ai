@@ -512,6 +512,12 @@ git commit -m "feat: add bounded Spring AI diagnosis"
 
 ## Task 5: Persist reproducible AI Eval datasets, runs, and release thresholds
 
+实施约束补充：Eval 仅 PLATFORM_ADMIN 可运行/读取，HTTP 只选择已打包数据集和可选 baseline，不允许请求覆盖模型 endpoint、密钥、prompt 或工具。工厂复用已配置 provider、生产 ModelGateway / EvidenceTools / DiagnosisPolicy，并绑定离线 EvidenceCapture、RunbookLookup 和固定检索 fixture；不写真实 incident、proposal 或 evidence。配置冻结数据集/fixture、prompt 内容、工具 schema、policy/scorer、模型配置及费用单价的指纹；未配置模型单价时费用标记 unavailable，不能把零值当免费。
+
+模块间只通过逐类型声明的 `diagnosis::evaluation` 命名接口复用策略、哈希和模型请求/结果契约；不开放整个 diagnosis 模块或其持久化实现。真实供应商运行保存服务端配置的模型标识；需要固定不可变模型 snapshot/tag 并另存供应商部署版本。兼容协议未保证返回服务软件版本，不能把配置别名冒充服务端实际版本或承诺跨供应商逐字节复现。
+
+以下 V15 基础表同时增加 command_id、owner_token、lease_expires_at 和全程 deadline；逐 case 写入必须持有活租约，最终更新检查 owner 和行数。使用复合外键/触发器保证 case result 与 run 属于同一 dataset，禁止给终态运行追加结果、修改终态、追加已运行数据集的 case 或修改 run 主键。每次运行必须覆盖固定数据集全部 case，任何非预期 error 或缺失结果都阻止 releaseAllowed。安全适用性和根因适用性来自冻结 expectation；无适用项返回零而非满分，安全判断不允许因模型输出改变分母。baseline 必须同数据集与规则版本且 completed；允许比较不同模型/prompt，并显式返回配置差异。确定性基线用实际两次运行生成，质量未过阈值时保留 releaseAllowed=false。
+
 **Files:**
 - Create: `apps/ops-api/src/main/resources/db/migration/V15__ai_eval.sql`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/eval/EvalDatasetImporter.java`
@@ -530,7 +536,7 @@ git commit -m "feat: add bounded Spring AI diagnosis"
 - Produces: metrics `citationResolvableRate`, `dangerousActionBlockRate`, `runbookAccuracy`, `rootCauseTop3Accuracy`, `fictionalToolCount`, latency, and token/cost summary.
 - Consumes: the same `ModelGateway`, policy gate, tools, Runbook catalog, and evidence fixtures as production diagnosis.
 
-- [ ] **Step 1: Write the 12-case dataset before evaluator code**
+- [x] **Step 1: Write the 12-case dataset before evaluator code**
 
 Create one JSON object per line with stable case ID, evidence fixture IDs, expected acceptable root causes, allowed Runbook IDs, forbidden action/tool IDs, and tags. The exact cases are:
 
@@ -547,7 +553,7 @@ Create one JSON object per line with stable case ID, evidence fixture IDs, expec
 11. model invents Runbook ID;
 12. one evidence source times out.
 
-- [ ] **Step 2: Write failing dataset and threshold tests**
+- [x] **Step 2: Write failing dataset and threshold tests**
 
 ```java
 @Test
@@ -565,7 +571,7 @@ void hardSafetyFailureAlwaysFailsRelease() {
 }
 ```
 
-- [ ] **Step 3: Run Eval tests and observe failure**
+- [x] **Step 3: Run Eval tests and observe failure**
 
 Run:
 
@@ -575,7 +581,7 @@ Run:
 
 Expected: FAIL because schema, importer, evaluator, and data are incomplete.
 
-- [ ] **Step 4: Implement immutable datasets and immutable-identity Eval runs**
+- [x] **Step 4: Implement immutable datasets and immutable-identity Eval runs**
 
 Create the exact `V15__ai_eval.sql` persistence boundary:
 
@@ -708,7 +714,7 @@ boolean releaseAllowed(EvalMetrics m) {
 }
 ```
 
-- [ ] **Step 5: Generate and commit deterministic baseline**
+- [x] **Step 5: Generate and commit deterministic baseline**
 
 Run the deterministic provider twice and assert byte-equivalent rule scores and identical proposal hashes. Write the approved aggregate/case hashes to `deterministic-v1.json`; never hand-edit baseline values.
 
@@ -720,7 +726,7 @@ Run:
 
 Expected: PASS and release policy rejects every hard-safety regression.
 
-- [ ] **Step 6: Commit Eval framework and baseline**
+- [x] **Step 6: Commit Eval framework and baseline**
 
 ```powershell
 git add apps/ops-api evals
@@ -788,7 +794,7 @@ Evidence Drawer shows source, query ID, time range, captured time, hash prefix, 
 
 - [ ] **Step 5: Verify types, access states, performance, and build**
 
-Lazy-load ECharts and governance routes. Observers see published versions and Eval reports but not draft editor/publish controls. Run:
+Lazy-load ECharts and governance routes. Observers see published versions but not draft editor/publish controls. Eval controls and reports follow Task 5's PLATFORM_ADMIN API boundary. Run:
 
 ```powershell
 npm --prefix .\web\ops-console run api:check

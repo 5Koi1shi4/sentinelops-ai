@@ -21,7 +21,7 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /** Capture outside transactions, then atomically freeze only redacted, bounded evidence. */
-public class EvidenceCaptureService {
+public class EvidenceCaptureService implements EvidenceCapture {
     private final Map<String, EvidenceSource> sources;
     private final EvidenceRedactor redactor;
     private final EvidenceStore store;

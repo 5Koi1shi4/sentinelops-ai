@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Server-owned scope passed to every read-only diagnosis tool. */
+@org.springframework.modulith.NamedInterface("evaluation")
 public record ToolContext(
         UUID incidentId,
         UUID runId,
