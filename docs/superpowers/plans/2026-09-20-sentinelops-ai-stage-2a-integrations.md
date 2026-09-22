@@ -14,7 +14,7 @@
 - Preserve all Stage 1 deterministic adapters and E2E tests; real providers are selected through profiles/configuration, not conditionals in domain code.
 - All model tools remain read-only and receive server-resolved source IDs, allowlists, time limits, row/byte limits, and incident context.
 - Default tool budget is six total calls and 90 seconds per diagnosis; the model cannot raise either limit.
-- Perform redaction and truncation before persistence and before provider calls; never rely on the model to ignore secrets.
+- Perform redaction and truncation before persistence and before model-provider calls; never rely on the model to ignore secrets.
 - Published Runbook versions and knowledge chunks are immutable; draft content cannot enter production retrieval.
 - Production embedding is explicit. A missing real embedding/model configuration may enter manual-only degraded mode, but it must not silently use deterministic vectors while claiming a real diagnosis.
 - Use `vector(1536)` for the first deployment contract; deterministic embeddings return exactly 1536 dimensions and any real provider response with another size fails validation.
@@ -124,7 +124,7 @@ Prometheus output contains timestamp/value pairs, metric labels filtered by allo
 
 Use Resilience4j core decorators for one retry on connection reset/502/503 and a circuit breaker; do not retry 400/401/403. Configuration is explicit Java beans, not the unresolved Spring Boot starter integration.
 
-审查补强：连接或完整响应超时计入熔断但不重试；熔断按配置的 scheme/host/port/endpoint path 隔离，不将动态 query 纳入 key 或遥测。归一化最多处理跨 series 合计 10,000 条样本，超过即拒绝，先于排序与快照创建；该解析硬上限独立于调用方更小的返回条数预算。
+审查补强：连接或完整响应超时计入熔断但不重试；熔断按配置的 scheme/host/port/endpoint path 隔离，不将动态 query 纳入 key 或遥测。归一化最多处理跨 series 合计 10,000 条样本，超过即拒绝，先于排序与快照创建；该解析硬上限独立于调用方更小的返回条数预算。保留的单个 label 值至多 4 KiB，每个 series 的保留 label key/value 合计至多 8 KiB，在样本展开前拒绝超限标签，防止重复标签放大归一化成本。
 
 - [x] **Step 5: Verify provider errors and bounded output**
 
@@ -169,7 +169,7 @@ git commit -m "feat: add bounded Prometheus and Loki evidence"
 
 实施接口补充：`EvidencePlan(UUID serviceId, Instant from, Instant to, List<EvidenceRequest> requests, EvidenceBudget budget)` 是后端构造的不可变计划；`EvidenceRequest(String sourceType, String queryId, Map<String,String> parameters)` 只引用注册查询。最多六个 request，`captureAndFreeze` 在任何外部调用前校验 run/incident/service 归属，最终持久化事务再次校验。`EvidenceSnapshot` 返回数据库 ID、来源、查询 ID、捕获时间、hash、截断/脱敏统计和 JSON 的防御性副本；不能通过 accessor 修改已冻结输入。公开 `incident.application.evidence` 的窄 NamedInterface，供 diagnosis 工具使用，禁止工具直接依赖 Repository。
 
-- [ ] **Step 1: Write failing secret/prompt-injection tests**
+- [x] **Step 1: Write failing secret/prompt-injection tests**
 
 ```java
 @ParameterizedTest
@@ -194,7 +194,7 @@ void logInstructionRemainsQuotedDataAndCannotSelectAnotherTool() {
 }
 ```
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 Run:
 
@@ -204,15 +204,19 @@ Run:
 
 Expected: FAIL because redaction, capture, and tool boundaries are absent.
 
-- [ ] **Step 3: Implement deterministic redaction before hashing/persistence**
+- [x] **Step 3: Implement deterministic redaction before hashing/persistence**
 
 Rules, in order: configured JSON-pointer denylist; case-insensitive key denylist (`authorization`, `cookie`, `password`, `secret`, `token`, `api_key`); bearer/JWT/API-key/credential URI patterns; maximum string length; maximum array/object depth. Replace values with `[REDACTED:<rule-id>]` and record only counts/rule IDs, never original values.
 
 Canonicalize the redacted JSON, then calculate SHA-256. Persist query spec, redacted payload, hash, source/time, truncation and diagnosis run ID in one transaction. Duplicate `(incident_id, content_hash)` reuses the prior snapshot.
 
+采集与返回预算分离：Task 2 使用后端固定的 10,000 条 / 1 MiB 采集硬上限（时间窗仍来自后端计划），超出硬上限的响应拒绝冻结。调用方较小的 `maxItems/maxBytes` 仅在脱敏后重排结果时应用，不能先按原始敏感标签选择样本；Task 1 的独立来源接口仍保持传入预算的有界契约。归一化序列化也必须使用有界写入，不能先构造可能放大的完整 JSON 字节数组再截断。
+
 V12 adds database enforcement that a snapshot/run link belongs to the same incident; keep both tables append-only. A reused snapshot keeps its original capture metadata and first run ID; link every authorized consuming run through `diagnosis_run_evidence`. Use atomic `ON CONFLICT DO NOTHING` plus a subsequent read instead of updating immutable rows. Include source type, query ID and time window in the canonical redacted payload to avoid conflating equal values from different sources. Hash after redaction and final byte capping. Recheck incident/service/run ownership and running state in the freeze transaction; foreign or completed runs cannot gain new evidence. No provider call occurs while a transaction is active.
 
-- [ ] **Step 4: Implement typed read tools with server-owned context**
+V12 使用 snapshot/run 的复合外键和 run/evidence 关联插入触发器校验归属，禁止修改 diagnosis run 的 ID 或 incident ID，避免后续移动运行破坏历史归属；已有非法历史数据使迁移失败，不改写历史。最终冻结事务按 incident、run 顺序加锁，预检查与最终提交均要求 `incident.version = diagnosis_run.incident_version`；`ON CONFLICT` 明确指定 snapshot 的 incident/hash 与 link 的 run/evidence 冲突键。已处于事务的调用方必须先退出事务再调用采集用例。脱敏统计保存在冻结 JSON 内，`query_spec` 从同一份脱敏后的元数据生成。只读工具返回防御性 JSON 副本和明确的不可信数据标识。
+
+- [x] **Step 4: Implement typed read tools with server-owned context**
 
 ```java
 public record ToolContext(UUID incidentId, UUID runId, UUID serviceId,
@@ -226,7 +230,7 @@ public sealed interface ReadOnlyTool permits MetricReadTool, LogReadTool, Eviden
 
 Tool input schemas accept only a registered query ID plus typed parameters. The incident/service/time range comes from `ToolContext` and is never visible as a model-editable argument. Return an envelope with evidence ID, source, captured time, truncation, trust marker, and redacted content.
 
-- [ ] **Step 5: Verify immutable capture and telemetry privacy**
+- [x] **Step 5: Verify immutable capture and telemetry privacy**
 
 `EvidenceCaptureIT` calls the same source twice, verifies hash reuse, then changes one redacted-safe value and verifies a new snapshot. Assert captured Micrometer tags contain IDs/status only, not payload fragments.
 
@@ -240,7 +244,7 @@ Run:
 
 Expected: PASS; no test log contains fixture secrets.
 
-- [ ] **Step 6: Commit evidence safety**
+- [x] **Step 6: Commit evidence safety**
 
 ```powershell
 git add apps/ops-api

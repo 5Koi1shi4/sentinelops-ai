@@ -33,8 +33,25 @@
 
 最终回归：`build/stage2a-task1-reviewed-reactor.log`，三应用均构建成功，118 项通过（API 91、Executor 26、Demo 1），其中证据专项 52 项（Prometheus 21、Loki 16、HTTP 15）。上述验收无失败或跳过；本轮没有重跑完整浏览器 Demo 发布门禁，也没有接入组织真实监控实例。
 
+## Task 2：脱敏、冻结与只读证据工具
+
+已完成证据采集到只读工具的应用边界，最终回归及独立 Spec / Quality 审查均通过。
+
+- 在任何来源调用前检查事故、服务、诊断运行及版本；外部采集不持有数据库事务。冻结事务按事故、运行顺序加锁并再次检查，拒绝已完成或过期运行的结果。
+- 对正文、warning、标签和查询元数据统一脱敏，保留安全诊断文本；脱敏后重新排序，再按返回条数/字节预算截断并计算 SHA-256。采集使用服务端固定的 10,000 条 / 1 MiB 硬上限，硬上限已截断的数据拒绝冻结，原始 hash 不入库。
+- 归一化 JSON 使用有界输出流；保留的标签在样本展开前限制单值 4 KiB、每 series 合计 8 KiB，避免重复标签放大中间分配。凭据规则覆盖嵌入 JSON、转义引号、空用户名 URI 和重叠匹配。
+- 相同事故中的相同脱敏内容复用原快照，并给当前运行追加关联；不同 source/query/window 保持不同身份。`getEvidence` 仅能读取当前运行已关联的证据，返回对象不能修改冻结 JSON。
+- V12 使用复合外键、归属触发器和运行身份不可变约束保护历史；包含归属错误的 V11 历史数据会使迁移失败并回滚，不会被自动改写。
+- `queryMetrics`、`queryLogs`、`getEvidence` 是固定的只读工具；模型参数不能修改事故、服务、时间窗、来源 URL 或预算。JSON envelope 明确标记 `UNTRUSTED_EXTERNAL_DATA`，日志中的指令保持为数据。
+
+首轮聚焦验收日志 `build/stage2a-task2-focused.log`：62 项通过，无跳过。审查后的聚焦日志 `build/stage2a-task2-reviewed-focused.log`：68 项通过，包括 15 项真实 PostgreSQL 冻结测试、15 项脱敏测试及工具、序列化、遥测边界验证。另有 2 项历史迁移拒绝测试。
+
+红—绿证据包括 `build/stage2a-task2-canonical-{red,green}.log`（脱敏后重排）、`build/stage2a-task2-itemcap-red.log`（低条数预算）、`build/stage2a-task2-labelcap-red.log`（标签放大），以及 `build/stage2a-task2-redactor-{escapedquote,uri,boundary,overlap}-{red,green}.log`。旧 schema 测试硬编码 V11 的断言已更新为 V12，未放宽版本校验。
+
+最终后端构建：`build/stage2a-task2-reviewed-reactor.log`，152 项通过（API 125、Executor 26、Demo 1）。完整真实依赖集成：`build/stage2a-task2-reviewed-integration.log`，105 项通过（API 93、Executor 3、Demo 9），包含现有 Demo 后端流程回归。两条命令均退出 0，无失败或跳过。独立复审确认低条数预算、凭据转义/重叠和归一化资源边界的修正已闭环。
+
 ## 下一实施任务
 
-Task 2：证据脱敏、冻结落库、跨运行关联与只读工具。需要 V12 数据库归属约束、并发去重与真实 PostgreSQL 测试。随后按计划依次推进 Runbook 检索、模型、Eval、治理界面、身份审计及 Stage 2A 总体验收。
+下一项为 Task 3：版本化 Runbook 的已发布知识检索。随后按计划依次推进模型、Eval、治理界面、身份审计及 Stage 2A 总体验收。
 
-当前 Demo 仍使用固定证据与确定性模型；真实来源的 profile 装配和端到端接入属于 Task 2 / 4 / 8。Stage 2A 尚未达到发布门禁，不能标记生产就绪。
+当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入在 Task 4 / 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。

@@ -42,9 +42,17 @@ final class EvidenceResponseNormalizer {
             if (!series.isObject() || !labelsNode.isObject() || !series.path("values").isArray()
                     || series.has("histograms")) throw malformed();
             Map<String, String> labels = new TreeMap<>();
+            int labelBytes = 0;
             for (var property : labelsNode.properties()) {
                 if (!property.getValue().isString()) throw malformed();
-                if (template.allowedLabels().contains(property.getKey())) labels.put(property.getKey(), property.getValue().asString());
+                if (template.allowedLabels().contains(property.getKey())) {
+                    var labelValue = property.getValue().asString();
+                    if (labelValue.length() > 4096) throw oversizedLabels();
+                    int valueBytes = labelValue.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    labelBytes += property.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8).length + valueBytes;
+                    if (valueBytes > 4096 || labelBytes > 8192) throw oversizedLabels();
+                    labels.put(property.getKey(), labelValue);
+                }
             }
             for (var sample : series.get("values")) {
                 if (!sample.isArray() || sample.size() != 2 || !sample.get(1).isString()
@@ -74,5 +82,9 @@ final class EvidenceResponseNormalizer {
 
     private static EvidenceSourceException malformed() {
         return new EvidenceSourceException("invalid evidence provider response");
+    }
+
+    private static EvidenceBudgetExceeded oversizedLabels() {
+        return new EvidenceBudgetExceeded("provider labels exceed normalization budget");
     }
 }

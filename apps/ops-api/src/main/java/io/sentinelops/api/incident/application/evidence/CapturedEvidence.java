@@ -1,5 +1,8 @@
 package io.sentinelops.api.incident.application.evidence;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -95,10 +98,10 @@ public final class CapturedEvidence {
         var warnings = new ArrayList<>(sourceWarnings);
         warnings.sort(String::compareTo);
         boolean truncated = initiallyTruncated;
-        byte[] canonical = canonicalBytes(sourceType, queryId, from, to, items, warnings, truncated);
-        if (canonical.length > maxBytes) {
+        var canonical = canonicalBytes(sourceType, queryId, from, to, items, warnings, truncated, maxBytes);
+        if (canonical.exceeded()) {
             truncated = true;
-            if (canonicalBytes(sourceType, queryId, from, to, List.of(), List.of(), true).length > maxBytes) {
+            if (canonicalBytes(sourceType, queryId, from, to, List.of(), List.of(), true, maxBytes).exceeded()) {
                 throw new EvidenceBudgetExceeded("normalized evidence metadata exceeds byte budget");
             }
             // 二分前缀，避免逐条删除后重复序列化的平方开销。
@@ -106,7 +109,7 @@ public final class CapturedEvidence {
             int high = warnings.size();
             while (low < high) {
                 int mid = (low + high + 1) / 2;
-                if (canonicalBytes(sourceType, queryId, from, to, List.of(), warnings.subList(0, mid), true).length <= maxBytes) low = mid;
+                if (!canonicalBytes(sourceType, queryId, from, to, List.of(), warnings.subList(0, mid), true, maxBytes).exceeded()) low = mid;
                 else high = mid - 1;
             }
             warnings = new ArrayList<>(warnings.subList(0, low));
@@ -114,11 +117,14 @@ public final class CapturedEvidence {
             high = items.size();
             while (low < high) {
                 int mid = (low + high + 1) / 2;
-                if (canonicalBytes(sourceType, queryId, from, to, items.subList(0, mid), warnings, true).length <= maxBytes) low = mid;
+                if (!canonicalBytes(sourceType, queryId, from, to, items.subList(0, mid), warnings, true, maxBytes).exceeded()) low = mid;
                 else high = mid - 1;
             }
             items = new ArrayList<>(items.subList(0, low));
-            canonical = canonicalBytes(sourceType, queryId, from, to, items, warnings, true);
+            canonical = canonicalBytes(sourceType, queryId, from, to, items, warnings, true, maxBytes);
+        }
+        if (canonical.exceeded()) {
+            throw new IllegalStateException("normalized evidence remained over the byte budget");
         }
         return new CapturedEvidence(
                 incidentId,
@@ -131,8 +137,8 @@ public final class CapturedEvidence {
                 items,
                 warnings,
                 truncated,
-                canonical.length,
-                sha256Hex(canonical));
+                canonical.bytes().length,
+                sha256Hex(canonical.bytes()));
     }
 
     public static CapturedEvidence bounded(EvidenceQuery query, String sourceType,
@@ -193,14 +199,15 @@ public final class CapturedEvidence {
         return contentHash;
     }
 
-    private static byte[] canonicalBytes(
+    private static SerializedJson canonicalBytes(
             String sourceType,
             String queryId,
             Instant from,
             Instant to,
             List<EvidenceItem> items,
             List<String> warnings,
-            boolean truncated) {
+            boolean truncated,
+            int maxBytes) {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("sourceType", sourceType);
         payload.put("queryId", queryId);
@@ -217,10 +224,62 @@ public final class CapturedEvidence {
         payload.put("items", normalizedItems);
         payload.put("warnings", warnings);
         payload.put("truncated", truncated);
+        var output = new BoundedOutputStream(maxBytes);
         try {
-            return OBJECT_MAPPER.writeValueAsBytes(payload);
+            OBJECT_MAPPER.writeValue(output, payload);
+            return new SerializedJson(output.bytes(), output.exceeded());
         } catch (JacksonException failure) {
+            if (output.exceeded()) return new SerializedJson(new byte[0], true);
             throw new IllegalStateException("cannot serialize normalized evidence", failure);
+        }
+    }
+
+    private record SerializedJson(byte[] bytes, boolean exceeded) {}
+
+    /** Streams at most the configured cap while retaining whether more bytes were written. */
+    private static final class BoundedOutputStream extends OutputStream {
+
+        private final int limit;
+        private final ByteArrayOutputStream buffer;
+        private long totalBytes;
+
+        private BoundedOutputStream(int limit) {
+            this.limit = limit;
+            this.buffer = new ByteArrayOutputStream(Math.min(limit, 4096));
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            if (totalBytes < limit) {
+                buffer.write(value);
+            }
+            totalBytes = Math.min((long) limit + 1, totalBytes + 1);
+            if (exceeded()) throw new IOException("normalized JSON size probe reached its limit");
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (bytes == null) {
+                throw new NullPointerException("bytes");
+            }
+            if (offset < 0 || length < 0 || offset > bytes.length - length) {
+                throw new IndexOutOfBoundsException();
+            }
+            long remaining = limit - totalBytes;
+            if (remaining > 0 && length > 0) {
+                int retained = (int) Math.min(remaining, length);
+                buffer.write(bytes, offset, retained);
+            }
+            totalBytes = Math.min((long) limit + 1, totalBytes + length);
+            if (exceeded()) throw new IOException("normalized JSON size probe reached its limit");
+        }
+
+        private byte[] bytes() {
+            return buffer.toByteArray();
+        }
+
+        private boolean exceeded() {
+            return totalBytes > limit;
         }
     }
 

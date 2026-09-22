@@ -119,4 +119,34 @@ class PrometheusEvidenceSourceTest implements EvidenceSourceContractTest {
         assertThat(result.items().getFirst().labels()).containsEntry("instance", "checkout-1");
         assertThat(result.truncated()).isTrue();
     }
+
+    @Test void rejectsOversizedRetainedLabelsBeforeSampleExpansion() {
+        server.stubFor(get(urlPathEqualTo(endpoint())).willReturn(okJson(successfulBody()
+                .replace("checkout-1", "x".repeat(4097)))));
+        assertThatThrownBy(() -> source().capture(query(), budget()))
+                .isInstanceOf(EvidenceBudgetExceeded.class).hasMessage("provider labels exceed normalization budget");
+    }
+
+    @Test void telemetryContainsOnlyRegisteredIdentifiersAndResult() {
+        var observations = ObservationRegistry.create();
+        var tags = new java.util.TreeMap<String, String>();
+        observations.observationConfig().observationHandler(new io.micrometer.observation.ObservationHandler<io.micrometer.observation.Observation.Context>() {
+            public boolean supportsContext(io.micrometer.observation.Observation.Context context) { return true; }
+            public void onStop(io.micrometer.observation.Observation.Context context) {
+                context.getLowCardinalityKeyValues().forEach(tag -> tags.put(tag.getKey(), tag.getValue()));
+                assertThat(context.getHighCardinalityKeyValues()).isEmpty();
+                assertThat(context.getError()).isNull();
+            }
+        });
+        var template = new EvidenceQueryTemplate("up{instance=\"${instance}\"}",
+                Map.of("instance", new EvidenceParameter("checkout-[0-9]+", Set.of())), Set.of(), Duration.ofSeconds(5));
+        var configured = new PrometheusEvidenceSource(new PrometheusProperties(URI.create(server.baseUrl()),
+                Map.of(SERVICE, Map.of("checkout", template)), 65536), new BoundedRestClientFactory(), observations);
+        server.stubFor(get(urlPathEqualTo(endpoint())).willReturn(okJson(successfulBody())));
+        configured.capture(query(), budget());
+        assertThat(tags).containsExactlyInAnyOrderEntriesOf(Map.of("source", "prometheus", "query", "checkout", "result", "success"));
+        server.stubFor(get(urlPathEqualTo(endpoint())).willReturn(okJson("invalid-provider-secret")));
+        assertThatThrownBy(() -> configured.capture(query(), budget())).isInstanceOf(EvidenceSourceException.class);
+        assertThat(tags).containsExactlyInAnyOrderEntriesOf(Map.of("source", "prometheus", "query", "checkout", "result", "error"));
+    }
 }
