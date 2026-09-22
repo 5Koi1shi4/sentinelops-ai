@@ -23,6 +23,11 @@ public record DiagnosisEvidence(
         contentHash = requireText(contentHash, "contentHash");
     }
 
+    @Override
+    public JsonNode redactedPayload() {
+        return redactedPayload.deepCopy();
+    }
+
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");

@@ -50,7 +50,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
     @Autowired private JdbcClient jdbc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private WebApplicationContext webApplicationContext;
-    @MockitoSpyBean private DiagnosisEngine diagnosisEngine;
+    @MockitoSpyBean private io.sentinelops.api.diagnosis.application.model.ModelGateway diagnosisEngine;
 
     private MockMvc mockMvc;
 
@@ -163,7 +163,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
                 RiskLevel.R1,
                 new VerificationExpectation(
                         "demo_checkout_health", new BigDecimal("1.0"), 6, 5));
-        doReturn(invalidDraft).when(diagnosisEngine).diagnose(any());
+        doReturn(new io.sentinelops.api.diagnosis.application.model.ModelDiagnosisResult(invalidDraft, "deterministic", "test", "diagnosis-system-v1", "test", "hash", "hash", 0, 0, 0, "stop", 0)).when(diagnosisEngine).diagnose(any());
 
         var failureResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
                         .with(operator(incident.serviceId()))

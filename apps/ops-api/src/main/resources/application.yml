@@ -1,4 +1,19 @@
 spring:
+  ai:
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+    tools:
+      throw-exception-on-error: true
+    chat:
+      observations:
+        log-prompt: false
+        log-completion: false
   application:
     name: sentinelops-api
   datasource:
@@ -29,6 +44,8 @@ spring:
       timeout: 2s
 
 sentinelops:
+  ai:
+    provider: ${SENTINELOPS_AI_PROVIDER:deterministic}
   security:
     issuer: ${SENTINELOPS_OIDC_ISSUER}
     audience: sentinelops-api

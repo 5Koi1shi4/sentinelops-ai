@@ -10,10 +10,10 @@ public record DiagnosisProposalDraft(
         String summary,
         List<Hypothesis> hypotheses,
         List<String> missingEvidence,
-        UUID runbookVersionId,
+        @org.jspecify.annotations.Nullable UUID runbookVersionId,
         Map<String, Object> parameters,
         RiskLevel riskLevel,
-        VerificationExpectation expectedVerification) {
+        @org.jspecify.annotations.Nullable VerificationExpectation expectedVerification) {
 
     public DiagnosisProposalDraft {
         if (summary == null || summary.isBlank()) {

@@ -64,6 +64,7 @@ class EvidenceCaptureIT extends PostgresIntegrationTest {
         UUID firstRun = run(incident);
         var first = freeze(incident, firstRun);
         message.set("password=hidden-two state=ok");
+        complete(firstRun);
         UUID secondRun = run(incident);
         var reused = freeze(incident, secondRun);
         assertThat(reused.id()).isEqualTo(first.id());
@@ -216,10 +217,9 @@ class EvidenceCaptureIT extends PostgresIntegrationTest {
         assertThat(calls).hasValue(1);
     }
 
-    @Test void concurrentIdenticalCapturesProduceOneSnapshotAndTwoLinks() throws Exception {
+    @Test void concurrentIdenticalCapturesWithinActiveRunProduceOneSnapshotAndOneLink() throws Exception {
         UUID incident = incident();
         UUID run1 = run(incident);
-        UUID run2 = run(incident);
         var barrier = new CyclicBarrier(2);
         duringCapture = () -> {
             try { barrier.await(10, TimeUnit.SECONDS); }
@@ -227,16 +227,19 @@ class EvidenceCaptureIT extends PostgresIntegrationTest {
         };
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> freeze(incident, run1));
-            var second = executor.submit(() -> freeze(incident, run2));
+            var second = executor.submit(() -> freeze(incident, run1));
             assertThat(first.get(20, TimeUnit.SECONDS).id()).isEqualTo(second.get(20, TimeUnit.SECONDS).id());
         }
         assertThat(count("evidence_snapshot", incident)).isEqualTo(1);
+        assertThat(jdbc.sql("select count(*) from diagnosis_run_evidence where diagnosis_run_id=:id")
+                .param("id", run1).query(Long.class).single()).isOne();
     }
 
     @Test void retrievalRequiresCurrentRunLinkAndReturnsDefensiveCopies() {
         UUID incident = incident();
         UUID run = run(incident);
         var frozen = freeze(incident, run);
+        complete(run);
         UUID unlinkedRun = run(incident);
         assertThatThrownBy(() -> capture.getEvidence(incident, unlinkedRun, serviceId, frozen.id()))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -298,12 +301,23 @@ class EvidenceCaptureIT extends PostgresIntegrationTest {
                 """).param("id", id).param("service", serviceId).param("fingerprint", id.toString()).update();
         return id;
     }
+    @Test void leaseExpiryDuringProviderCallPreventsFreezingLateEvidence() {
+        UUID incident = incident();
+        UUID run = run(incident);
+        duringCapture = () -> jdbc.sql("""
+                update diagnosis_run set started_at=clock_timestamp()-interval '100 seconds',
+                  lease_expires_at=clock_timestamp()-interval '11 seconds' where id=:id
+                """).param("id", run).update();
+        assertThatThrownBy(() -> freeze(incident, run)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(count("evidence_snapshot", incident)).isZero();
+    }
+
     private UUID run(UUID incident) {
         UUID id = UUID.randomUUID();
         jdbc.sql("""
                 insert into diagnosis_run(id,incident_id,requested_by_principal_id,incident_version,
-                engine_type,status,prompt_version,input_hash,started_at)
-                values (:id,:incident,:principal,0,'deterministic','running','test','test',now())
+                engine_type,status,prompt_version,input_hash,started_at,owner_token,lease_expires_at)
+                values (:id,:incident,:principal,0,'deterministic','running','test','test',now(),:id,now()+interval '90 seconds')
                 """).param("id", id).param("incident", incident).param("principal", principalId).update();
         return id;
     }

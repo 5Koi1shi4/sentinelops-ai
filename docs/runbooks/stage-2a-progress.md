@@ -79,8 +79,32 @@ npm --prefix web/ops-console run build
 
 OpenAPI 最终生成与 `api:check` 日志为 `build/task3-final-api-types.log`，前端生产构建为 `build/task3-web-build.log`，均通过。Vite 的沙箱子进程 EPERM 在正常权限下重跑解决，未修改依赖版本。本任务未修改前端页面、未重跑完整浏览器 E2E、未接入真实模型 provider，也未部署或推送远程。
 
+## Task 4：有界 Spring AI 诊断
+
+接入统一模型网关，支持 deterministic、OpenAI-compatible、Ollama 和 manual-only。配置与运维说明见 [模型配置](model-providers.md)。生产 profile 禁止 deterministic；manual-only 返回明确的 503，事故仍可读取和人工分诊。
+
+- 诊断改为领取短事务、事务外模型等待、最终提交短事务。V14 通过活动运行唯一索引、owner token、最长 90 秒租约及命令关联约束保护并发与幂等。
+- 冻结服务、事故版本、运行、15 分钟查询窗及发布语料哈希，只开放四个只读工具。六次调用预算跨结构修复共享，90 秒墙钟超时会中断等待；过期工具采集不能写入证据。
+- Spring AI 2.0.1 结构校验最多一次修复；仅为 R0 的两个可空字段扩展 schema。默认 advisor 只看到固定的无效占位对象，修复请求包含错误码和响应哈希，日志捕获断言验证原始正文不泄露。
+- 最终重验事故版本、状态、授权、语料和 Runbook 生命周期。策略校验后以 owner/status/lease 条件更新取得成功终态，再原子写入提案、事故事件、Outbox 和幂等响应。修正了最终校验或锁等待跨过租约后仍可提交的问题。
+- 模型元数据记录 provider/model、prompt/corpus 版本、输入/响应哈希、token 用量、工具次数和耗时。失败路径保留安全错误及可获得的元数据，不返回供应商原始错误正文。
+- 真实 PostgreSQL 测试覆盖事务释放、重复请求、当前授权、失败恢复、旧 owner 迟到、版本冲突、唯一约束和最终校验期间租约过期。WireMock 调用真实 OpenAI/Ollama SDK 验证聊天及 1536 维 Embedding 协议；提示注入测试拒绝新增动作工具。
+
+红—绿证据：`build/task4-claim-red.log` 复现原同步事务、重复请求和授权问题；`build/task4-nullable-red.log` 复现 R0 schema 问题；`build/task4-options-diagnostic.log` 确认测试 ChatModel 的普通 options 使工具循环未运行；`build/task4-budget-green.log` 六项全部通过。`build/task4-final-fence-red.log` 复现最终租约漏洞及 Ollama HTTP/2 EOF，修正后 `build/task4-final-fence-green.log` 的 20 项全部通过。旧 KnowledgeConfiguration 测试随 Embedding 工厂迁移更新，Demo/production 组合限制在统一 provider 测试中保留。
+
+最终验收（Java 21）：
+
+```powershell
+.\mvnw.cmd -B -ntp '-Dtest=*Test,*Tests,*IT' '-Dsurefire.failIfNoSpecifiedTests=false' verify
+npm --prefix web/ops-console run api:check
+```
+
+`build/task4-final-all.log` 共 339 项通过（API 300、Executor 29、Demo 10），无失败或跳过，三应用构建成功。`build/task4-api-contract.log` 的生成类型检查通过。未使用外部模型凭据，未宣称真实模型质量、浏览器 E2E 或线上部署已验收。
+
+独立 Spec/Quality 审查通过，最终租约 P1 已闭环，未发现剩余 P1/P2；`git diff --check` 通过。
+
 ## 下一实施任务
 
-下一项为 Task 4：真实模型接入与有界诊断编排。随后按计划依次推进 Eval、治理界面、身份审计及 Stage 2A 总体验收。
+下一项为 Task 5：可复现 AI Eval 数据集、运行记录与发布阈值。随后按计划推进治理界面、身份审计及 Stage 2A 总体验收。
 
 当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入在 Task 4 / 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。

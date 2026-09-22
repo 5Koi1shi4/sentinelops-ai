@@ -8,9 +8,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 class KnowledgeConfigurationTest {
     final ApplicationContextRunner runner = new ApplicationContextRunner().withUserConfiguration(KnowledgeConfiguration.class);
 
-    @Test void explicitDemoProfileProvidesDeterministicEmbedding() {
+    @Test void knowledgeConfigurationOnlyOwnsChunkingAndProviderConfigurationOwnsEmbedding() {
         runner.withPropertyValues("spring.profiles.active=demo").run(context ->
-                assertThat(context.getBean(EmbeddingGateway.class)).isInstanceOf(DeterministicEmbeddingGateway.class));
+                assertThat(context).hasSingleBean(KnowledgeChunker.class).doesNotHaveBean(EmbeddingGateway.class));
     }
 
     @Test void productionNeverFallsBackEvenWhenDemoIsAlsoActive() {

@@ -28,7 +28,7 @@ public class EvidenceStore {
                         + (lock ? " for update" : ""))
                 .param("incident", incidentId).param("service", serviceId).query(Long.class).optional()
                 .orElseThrow(EvidenceStore::invalidScope);
-        long runVersion = jdbc.sql("select incident_version from diagnosis_run where id=:run and incident_id=:incident and status='running'"
+        long runVersion = jdbc.sql("select incident_version from diagnosis_run where id=:run and incident_id=:incident and status='running' and lease_expires_at>clock_timestamp()"
                         + (lock ? " for update" : ""))
                 .param("run", runId).param("incident", incidentId).query(Long.class).optional()
                 .orElseThrow(EvidenceStore::invalidScope);

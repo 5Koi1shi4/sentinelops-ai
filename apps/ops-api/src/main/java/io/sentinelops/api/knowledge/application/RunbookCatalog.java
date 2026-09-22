@@ -37,6 +37,22 @@ public class RunbookCatalog {
                 .optional();
     }
 
+    /** Hold the lifecycle stable until the caller commits its policy-validated proposal. */
+    public Optional<RunbookVersion> lockVersion(UUID versionId) {
+        return jdbc.sql(SELECT_VERSION + " where rv.id = :versionId for share of rv")
+                .param("versionId", versionId).query(this::mapVersion).optional();
+    }
+
+    public String publishedCorpusVersion(UUID serviceId) {
+        // One database snapshot; retirement/publication both change the version.
+        return jdbc.sql("""
+                select encode(sha256(convert_to(coalesce(string_agg(rv.id::text || ':' || rv.definition_checksum,
+                  ',' order by rv.id),''),'UTF8')),'hex')
+                from runbook_version rv join runbook r on r.id=rv.runbook_id
+                where r.service_id=:service and rv.lifecycle='published'
+                """).param("service", serviceId).query(String.class).single();
+    }
+
     public Optional<RunbookVersion> findPublished(String runbookKey, UUID serviceId) {
         return jdbc.sql(SELECT_VERSION + """
                          where r.runbook_key = :runbookKey

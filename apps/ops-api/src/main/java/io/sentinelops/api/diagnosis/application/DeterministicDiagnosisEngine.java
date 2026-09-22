@@ -16,7 +16,6 @@ import java.util.UUID;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
-@Component
 public class DeterministicDiagnosisEngine implements DiagnosisEngine {
 
     static final String RUNBOOK_KEY = "RB-DB-POOL-03";
