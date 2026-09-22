@@ -1,26 +1,69 @@
+import { useState } from "react";
+import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
+
+import { AuthProvider } from "../auth/AuthProvider";
+import { useAuth } from "../auth/authContext";
+import { IncidentDetailPage } from "../features/incidents/IncidentDetailPage";
+import { IncidentListPage } from "../features/incidents/IncidentListPage";
+
 const navigation = [
-    { index: "01", label: "事故中心", href: "#incident-center", current: true },
-    { index: "02", label: "审批工作台", href: "#approvals" },
-    { index: "03", label: "Runbooks", href: "#runbooks" },
-    { index: "04", label: "AI 评测", href: "#evaluations" },
+    { index: "01", label: "事故中心", href: "/incidents" },
+    { index: "02", label: "审批工作台", href: "/incidents?view=approvals" },
+    { index: "03", label: "Runbooks", href: "/incidents?view=runbooks" },
+    { index: "04", label: "AI 评测", href: "/incidents?view=evaluations" },
 ];
 
-const signalStages = [
-    { index: "01", label: "信号接入", state: "监听中", active: true },
-    { index: "02", label: "事故归并", state: "待命" },
-    { index: "03", label: "决策审批", state: "待命" },
-    { index: "04", label: "安全执行", state: "待命" },
-];
+function SignedOutWorkspace() {
+    const { signIn } = useAuth();
+    const [error, setError] = useState<string | null>(null);
+    const startSignIn = async () => {
+        try {
+            setError(null);
+            await signIn();
+        } catch (failure) {
+            setError(
+                failure instanceof Error ? failure.message : "无法启动登录",
+            );
+        }
+    };
+    return (
+        <section className="incident-intro signed-out-panel">
+            <div>
+                <p className="eyebrow">
+                    INCIDENT COMMAND / AUTHENTICATION REQUIRED
+                </p>
+                <h1>事故中心</h1>
+                <p className="lede">
+                    登录后读取你负责服务范围内的事故与审批状态。
+                </p>
+                <button
+                    className="primary-action"
+                    type="button"
+                    onClick={startSignIn}
+                >
+                    登录控制平面
+                </button>
+                <p className="mutation-status" role="status" aria-live="polite">
+                    {error}
+                </p>
+            </div>
+        </section>
+    );
+}
 
-export function App() {
+function Console() {
+    const { user, isLoading } = useAuth();
     return (
         <div className="console-shell">
             <a className="skip-link" href="#main-content">
                 跳至主要内容
             </a>
-
             <aside className="command-rail">
-                <div className="brand-lockup">
+                <Link
+                    className="brand-lockup"
+                    to="/incidents"
+                    aria-label="SentinelOps 首页"
+                >
                     <span className="brand-mark" aria-hidden="true">
                         S
                     </span>
@@ -28,27 +71,20 @@ export function App() {
                         <strong>SentinelOps</strong>
                         <small>AI CONTROL PLANE</small>
                     </span>
-                </div>
-
+                </Link>
                 <div className="rail-caption">
                     <span>INCIDENT COMMAND</span>
                     <span className="live-indicator">
                         <span className="status-dot" aria-hidden="true" /> LIVE
                     </span>
                 </div>
-
                 <nav className="primary-navigation" aria-label="主导航">
                     <ol>
-                        {navigation.map((item) => (
+                        {navigation.map((item, index) => (
                             <li key={item.index}>
-                                <a
-                                    className={
-                                        item.current ? "is-current" : undefined
-                                    }
-                                    href={item.href}
-                                    aria-current={
-                                        item.current ? "page" : undefined
-                                    }
+                                <Link
+                                    className={index === 0 ? "is-current" : ""}
+                                    to={item.href}
                                 >
                                     <span
                                         className="nav-index"
@@ -63,83 +99,62 @@ export function App() {
                                     >
                                         →
                                     </span>
-                                </a>
+                                </Link>
                             </li>
                         ))}
                     </ol>
                 </nav>
-
                 <div className="environment-card">
                     <span className="environment-label">ENVIRONMENT</span>
                     <strong>Stage 1 · Demo</strong>
                     <span>本地控制平面</span>
                 </div>
             </aside>
-
-            <main id="main-content" className="workspace">
+            <main id="main-content" className="workspace" tabIndex={-1}>
                 <header className="topbar">
                     <p>
-                        <span className="status-dot" aria-hidden="true" />{" "}
+                        <span className="status-dot" aria-hidden="true" />
                         控制平面在线
                     </p>
-                    <p className="topbar-meta">CN / UTC+08 · 只读观察模式</p>
+                    <p className="topbar-meta">
+                        {user
+                            ? `${user.displayName} · ${user.roles.join(" / ")}`
+                            : "CN / UTC+08"}
+                    </p>
                 </header>
-
-                <section className="incident-intro" id="incident-center">
-                    <div>
-                        <p className="eyebrow">INCIDENT COMMAND / LIVE QUEUE</p>
-                        <h1>事故中心</h1>
-                        <p className="lede">
-                            汇聚告警信号，构建事故上下文，并将每一次高风险操作置于人工审批之下。
-                        </p>
+                {isLoading ? (
+                    <div className="detail-loading" role="status">
+                        正在恢复会话…
                     </div>
-
-                    <dl className="readiness-panel" aria-label="系统就绪状态">
-                        <div>
-                            <dt>OPEN INCIDENTS</dt>
-                            <dd>00</dd>
-                        </div>
-                        <div>
-                            <dt>CONTROL STATUS</dt>
-                            <dd className="ready-value">READY</dd>
-                        </div>
-                    </dl>
-                </section>
-
-                <ol className="signal-rail" aria-label="事故响应阶段">
-                    {signalStages.map((stage) => (
-                        <li
-                            className={stage.active ? "is-active" : undefined}
-                            key={stage.index}
-                        >
-                            <span className="signal-index">{stage.index}</span>
-                            <span className="signal-copy">
-                                <strong>{stage.label}</strong>
-                                <small>{stage.state}</small>
-                            </span>
-                            <span className="signal-node" aria-hidden="true" />
-                        </li>
-                    ))}
-                </ol>
-
-                <section className="queue-panel" aria-labelledby="queue-title">
-                    <header className="queue-header">
-                        <div>
-                            <p className="eyebrow">ACTIVE QUEUE</p>
-                            <h2 id="queue-title">事故队列</h2>
-                        </div>
-                        <span className="queue-count">0 ACTIVE</span>
-                    </header>
-
-                    <div className="connection-state" role="status">
-                        <span className="radar-mark" aria-hidden="true">
-                            <span />
-                        </span>
-                        <p>正在连接控制平面…</p>
-                        <small>新事故将在完成归并与风险分级后显示于此。</small>
-                    </div>
-                </section>
+                ) : user ? (
+                    <Routes>
+                        <Route
+                            path="/incidents"
+                            element={<IncidentListPage />}
+                        />
+                        <Route
+                            path="/incidents/:incidentId"
+                            element={<IncidentDetailPage />}
+                        />
+                        <Route
+                            path="*"
+                            element={<Navigate replace to="/incidents" />}
+                        />
+                    </Routes>
+                ) : (
+                    <SignedOutWorkspace />
+                )}
             </main>
         </div>
+    );
+}
+
+export function App() {
+    return (
+        <AuthProvider>
+            <BrowserRouter>
+                <Console />
+            </BrowserRouter>
+        </AuthProvider>
     );
 }

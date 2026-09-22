@@ -3,7 +3,8 @@
 :root {
     color-scheme: dark;
     font-family:
-        Inter,
+        "IBM Plex Sans",
+        "Noto Sans SC",
         "Segoe UI Variable",
         "Segoe UI",
         system-ui,
@@ -602,5 +603,711 @@ a {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+}
+
+button,
+a {
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+}
+
+.brand-lockup {
+    color: inherit;
+    text-decoration: none;
+}
+
+.signed-out-panel {
+    min-height: calc(100dvh - 65px);
+    align-items: center;
+}
+
+.signed-out-panel .primary-action {
+    margin-top: 28px;
+}
+
+.primary-action,
+.secondary-action {
+    min-height: 44px;
+    padding: 11px 16px;
+    border: 1px solid var(--teal);
+    color: var(--ink);
+    background: var(--teal);
+    font-weight: 800;
+    transition:
+        transform 160ms ease,
+        background-color 160ms ease,
+        border-color 160ms ease;
+}
+
+.primary-action:hover:not(:disabled),
+.secondary-action:hover:not(:disabled) {
+    transform: translateY(-1px);
+    background: #79ead9;
+}
+
+.primary-action:active:not(:disabled),
+.secondary-action:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.primary-action:disabled,
+.secondary-action:disabled {
+    border-color: var(--border-strong);
+    color: #82979f;
+    background: #1a2a31;
+}
+
+.secondary-action {
+    color: var(--text);
+    background: transparent;
+}
+
+.danger-action {
+    border-color: var(--danger);
+}
+
+.full-action {
+    width: 100%;
+}
+
+.incident-table {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.incident-table li + li {
+    border-top: 1px solid var(--border);
+}
+
+.incident-table a {
+    display: grid;
+    grid-template-columns: 72px minmax(220px, 1fr) 70px auto 70px;
+    gap: 18px;
+    min-height: 82px;
+    align-items: center;
+    padding: 14px 24px;
+    color: var(--text);
+    text-decoration: none;
+    transition: background-color 160ms ease;
+}
+
+.incident-table a:hover {
+    background: rgba(69, 224, 202, 0.055);
+}
+
+.incident-name strong,
+.incident-name small {
+    display: block;
+}
+
+.incident-name strong {
+    font-size: 14px;
+}
+
+.incident-name small,
+.incident-table time,
+.incident-occurrences {
+    margin-top: 5px;
+    color: var(--text-muted);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+}
+
+.severity-mark,
+.state-chip,
+.risk-chip,
+.event-count {
+    display: inline-flex;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 8px;
+    border: 1px solid var(--border-strong);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
+.severity-mark.sev1,
+.risk-r2,
+.risk-r3 {
+    border-color: var(--danger);
+    color: var(--danger);
+    background: rgba(255, 113, 138, 0.09);
+}
+
+.severity-mark.sev2,
+.risk-r1,
+.state-pending,
+.state-awaiting_approval {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: rgba(245, 196, 81, 0.08);
+}
+
+.severity-mark.sev3,
+.severity-mark.sev4,
+.risk-r0 {
+    color: var(--text-muted);
+}
+
+.state-approved,
+.state-succeeded,
+.state-resolved,
+.state-complete {
+    border-color: var(--teal);
+    color: var(--teal);
+    background: rgba(69, 224, 202, 0.08);
+}
+
+.state-rejected,
+.state-failed,
+.state-escalated {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.detail-loading {
+    display: grid;
+    min-height: calc(100dvh - 65px);
+    place-items: center;
+    color: var(--text-muted);
+}
+
+.incident-detail {
+    padding-bottom: 48px;
+}
+
+.breadcrumb {
+    display: flex;
+    gap: 10px;
+    padding: 24px 0 18px;
+    color: var(--text-muted);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+}
+
+.breadcrumb a {
+    color: var(--teal);
+}
+
+.incident-command-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 32px;
+    padding: 34px 0 30px;
+}
+
+.incident-command-header h1 {
+    max-width: 900px;
+    margin: 0;
+    font-family: "Arial Narrow", "Roboto Condensed", "Noto Sans SC", sans-serif;
+    font-size: clamp(34px, 5vw, 68px);
+    letter-spacing: -0.04em;
+    line-height: 1;
+}
+
+.incident-subline {
+    margin: 18px 0 0;
+    color: var(--text-muted);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 11px;
+}
+
+.incident-state-lockup {
+    display: flex;
+    min-width: 190px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 13px;
+    padding-bottom: 4px;
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 12px;
+}
+
+.response-spine {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    margin: 0 0 28px;
+    padding: 18px 0 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    list-style: none;
+}
+
+.response-spine li {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 9px;
+    color: #78909a;
+    text-align: center;
+}
+
+.response-spine li::before {
+    position: absolute;
+    z-index: 0;
+    top: 5px;
+    right: 50%;
+    left: -50%;
+    height: 1px;
+    background: var(--border-strong);
+    content: "";
+}
+
+.response-spine li:first-child::before {
+    display: none;
+}
+
+.spine-node {
+    position: relative;
+    z-index: 1;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--ink);
+}
+
+.response-spine .is-complete,
+.response-spine .is-current {
+    color: var(--text);
+}
+
+.response-spine .is-complete::before,
+.response-spine .is-current::before {
+    background: var(--teal);
+}
+
+.response-spine .is-complete .spine-node {
+    border-color: var(--teal);
+    background: var(--teal);
+}
+
+.response-spine .is-current .spine-node {
+    border-color: var(--amber);
+    box-shadow: 0 0 0 5px rgba(245, 196, 81, 0.1);
+}
+
+.response-spine small {
+    font-size: 10px;
+}
+
+.cockpit-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.cockpit-primary,
+.cockpit-actions {
+    display: grid;
+    gap: 24px;
+}
+
+.cockpit-actions {
+    position: sticky;
+    top: 20px;
+}
+
+.control-card {
+    border: 1px solid var(--border);
+    background: rgba(13, 27, 34, 0.82);
+}
+
+.card-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.card-heading h2,
+.empty-diagnosis h2,
+.submit-approval-card h2 {
+    margin: 0;
+    font-family: "Arial Narrow", "Roboto Condensed", "Noto Sans SC", sans-serif;
+    font-size: 24px;
+    line-height: 1.2;
+}
+
+.compact-heading {
+    padding-block: 20px;
+}
+
+.hypothesis-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.hypothesis-list li {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 16px;
+    padding: 24px;
+}
+
+.hypothesis-rank {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    place-items: center;
+    border: 1px solid var(--teal);
+    color: var(--teal);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+}
+
+.hypothesis-list strong {
+    font-size: 15px;
+}
+
+.confidence-note,
+.policy-note,
+.empty-diagnosis > p:not(.eyebrow),
+.submit-approval-card p:not(.eyebrow) {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+.confidence-note {
+    margin: 8px 0 0;
+}
+
+.evidence-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.evidence-links a {
+    min-height: 30px;
+    padding: 6px 9px;
+    border: 1px solid var(--border-strong);
+    color: var(--teal);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+    text-decoration: none;
+}
+
+.evidence-index {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0 24px 20px;
+    list-style: none;
+}
+
+.evidence-index li {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    min-height: 44px;
+    padding: 10px 12px;
+    scroll-margin-top: 24px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--teal);
+    background: var(--surface-raised);
+}
+
+.evidence-index li:target,
+.evidence-index li:focus {
+    border-color: var(--teal);
+    outline: 2px solid color-mix(in srgb, var(--teal) 45%, transparent);
+    outline-offset: 2px;
+}
+
+.evidence-index strong,
+.evidence-index span,
+.evidence-index time {
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+}
+
+.evidence-index strong {
+    color: var(--teal);
+}
+
+.evidence-index span,
+.evidence-index time {
+    color: var(--text-muted);
+}
+
+.proposal-metadata,
+.approval-grid,
+.execution-metadata {
+    display: grid;
+    margin: 0;
+}
+
+.proposal-metadata {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+}
+
+.proposal-metadata > div,
+.approval-grid > div,
+.execution-metadata > div {
+    min-width: 0;
+    padding: 16px;
+}
+
+.proposal-metadata > div + div {
+    border-left: 1px solid var(--border);
+}
+
+.proposal-metadata dt,
+.approval-grid dt,
+.execution-metadata dt {
+    color: var(--text-muted);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+}
+
+.proposal-metadata dd,
+.approval-grid dd,
+.execution-metadata dd {
+    margin: 7px 0 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+
+.mono-value {
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+}
+
+.approval-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.approval-grid > div {
+    border-bottom: 1px solid var(--border);
+}
+
+.approval-grid > div:nth-child(odd) {
+    border-right: 1px solid var(--border);
+}
+
+.decision-zone,
+.execution-card > .policy-note,
+.execution-metadata,
+.empty-diagnosis,
+.submit-approval-card {
+    padding: 22px;
+}
+
+.decision-zone label {
+    display: block;
+    margin: 18px 0 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.decision-zone textarea {
+    width: 100%;
+    min-height: 88px;
+    resize: vertical;
+    padding: 11px;
+    border: 1px solid var(--border-strong);
+    border-radius: 0;
+    color: var(--text);
+    background: var(--ink);
+    font: inherit;
+    line-height: 1.5;
+}
+
+.decision-zone textarea:focus {
+    border-color: var(--teal);
+}
+
+.policy-warning {
+    margin: 0;
+    padding: 11px;
+    border-left: 3px solid var(--amber);
+    color: #ffe39b;
+    background: rgba(245, 196, 81, 0.08);
+    font-size: 12px;
+}
+
+.action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.mutation-status {
+    min-height: 20px;
+    margin: 10px 22px;
+    color: var(--amber);
+    font-size: 12px;
+}
+
+.confirmed-state {
+    margin: 0;
+    padding: 18px 22px;
+    color: var(--teal);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 11px;
+}
+
+.execution-card .full-action {
+    width: calc(100% - 44px);
+    margin: 0 22px;
+}
+
+.submit-approval-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 22px;
+    border-color: var(--amber);
+}
+
+.submit-approval-card p {
+    margin-bottom: 0;
+}
+
+.timeline-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.timeline-list li {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    gap: 16px;
+    padding: 20px 24px;
+}
+
+.timeline-list li + li {
+    border-top: 1px solid var(--border);
+}
+
+.timeline-sequence {
+    color: var(--teal);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 10px;
+}
+
+.timeline-list header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.timeline-list strong {
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.timeline-list time,
+.timeline-list small {
+    color: var(--text-muted);
+    font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+    font-size: 9px;
+}
+
+.timeline-list p {
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.empty-note {
+    margin: 0;
+    padding: 26px;
+    color: var(--text-muted);
+}
+
+.global-status {
+    margin-inline: 0;
+}
+
+@media (max-width: 1160px) {
+    .cockpit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cockpit-actions {
+        position: static;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .incident-table a {
+        grid-template-columns: 64px minmax(200px, 1fr) auto auto;
+    }
+
+    .incident-table time {
+        display: none;
+    }
+}
+
+@media (max-width: 720px) {
+    .incident-command-header {
+        display: block;
+    }
+
+    .incident-state-lockup {
+        justify-content: flex-start;
+        margin-top: 24px;
+    }
+
+    .response-spine {
+        grid-template-columns: repeat(4, 1fr);
+        row-gap: 18px;
+    }
+
+    .response-spine li::before {
+        display: none;
+    }
+
+    .cockpit-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .proposal-metadata {
+        grid-template-columns: 1fr;
+    }
+
+    .proposal-metadata > div + div {
+        border-top: 1px solid var(--border);
+        border-left: 0;
+    }
+
+    .incident-table a {
+        grid-template-columns: 58px minmax(0, 1fr) auto;
+        gap: 10px;
+        padding-inline: 14px;
+    }
+
+    .incident-occurrences,
+    .incident-table .state-chip {
+        display: none;
+    }
+
+    .submit-approval-card {
+        display: grid;
+    }
+
+    .action-row {
+        grid-template-columns: 1fr;
     }
 }

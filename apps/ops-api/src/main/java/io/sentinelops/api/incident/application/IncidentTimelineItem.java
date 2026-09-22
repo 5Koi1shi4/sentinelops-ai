@@ -1,8 +1,8 @@
 package io.sentinelops.api.incident.application;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
-import tools.jackson.databind.JsonNode;
 
 public record IncidentTimelineItem(
         UUID id,
@@ -12,5 +12,12 @@ public record IncidentTimelineItem(
         String actorId,
         String source,
         String sourceEventId,
-        JsonNode payload,
-        Instant occurredAt) {}
+        String summary,
+        String traceId,
+        List<UUID> evidenceIds,
+        Instant occurredAt) {
+
+    public IncidentTimelineItem {
+        evidenceIds = List.copyOf(evidenceIds);
+    }
+}

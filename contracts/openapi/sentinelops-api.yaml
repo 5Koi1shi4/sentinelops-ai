@@ -1,0 +1,1103 @@
+openapi: 3.1.0
+info:
+  title: SentinelOps AI Stage 1 API
+  version: 0.1.0-demo
+  description: >-
+    Service-scoped incident command API. Mutating operations are explicit,
+    idempotent, version-checked, role-gated, and auditable.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Incidents
+  - name: Diagnosis
+  - name: Approvals
+  - name: Executions
+  - name: Integrations
+
+paths:
+  /incidents:
+    get:
+      operationId: listIncidents
+      tags: [Incidents]
+      summary: List service-scoped incidents
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/IncidentStatus"
+        - name: serviceId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: severity
+          in: query
+          schema:
+            $ref: "#/components/schemas/Severity"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A cursor-paginated incident page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /incidents/{incidentId}:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      operationId: getIncidentCockpit
+      tags: [Incidents]
+      summary: Get a sanitized incident cockpit projection
+      description: >-
+        Returns the latest bounded diagnosis, evidence metadata, active approval,
+        and execution. Raw prompts, execution tickets, provider responses, and
+        evidence bodies are deliberately excluded.
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      responses:
+        "200":
+          description: Service-scoped incident cockpit.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentCockpit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /incidents/{incidentId}/timeline:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      operationId: getIncidentTimeline
+      tags: [Incidents]
+      summary: Read the immutable incident event timeline
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A cursor-paginated event page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentTimelinePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /incidents/{incidentId}/evidence:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      operationId: listIncidentEvidence
+      tags: [Incidents]
+      summary: Read separately authorized redacted evidence snapshots
+      x-required-roles: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+      responses:
+        "200":
+          description: Redacted evidence snapshots.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/EvidenceSnapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /incidents/{incidentId}/diagnosis-runs:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    post:
+      operationId: startDiagnosis
+      tags: [Diagnosis]
+      summary: Run an evidence-backed diagnosis
+      x-required-roles: [ON_CALL_OPERATOR, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Diagnosis proposal created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosisProposal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+
+  /incidents/{incidentId}/approval-requests:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    post:
+      operationId: requestApproval
+      tags: [Approvals]
+      summary: Submit a diagnosed proposal for approval
+      x-required-roles: [ON_CALL_OPERATOR, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestApproval"
+      responses:
+        "201":
+          description: Approval request created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalCommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+
+  /approval-requests/{requestId}/decisions:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: decideApproval
+      tags: [Approvals]
+      summary: Record an independent approval decision
+      x-required-roles: [SRE_APPROVER, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionCommand"
+      responses:
+        "200":
+          description: Decision recorded using server-confirmed state.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalCommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+
+  /incidents/{incidentId}/executions:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    post:
+      operationId: createExecution
+      tags: [Executions]
+      summary: Start an explicitly approved proposal
+      x-required-roles: [ON_CALL_OPERATOR, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExecution"
+      responses:
+        "201":
+          description: Execution accepted for asynchronous dispatch.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionCommandResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+
+  /incidents/{incidentId}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    post:
+      operationId: requestManualResolution
+      tags: [Executions]
+      summary: Request probe-backed manual resolution
+      x-required-roles: [ON_CALL_OPERATOR, PLATFORM_ADMIN]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "202":
+          description: Verification cycle queued; the incident is not yet resolved.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualVerificationResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+
+  /integrations/alertmanager/webhook:
+    post:
+      operationId: receiveAlertmanagerWebhook
+      tags: [Integrations]
+      summary: Ingest a validated Alertmanager v4 webhook
+      description: >-
+        Requires a bearer token with the sentinelops-api audience outside the Demo
+        profile. The isolated Demo profile permits this private-network webhook
+        without a user role.
+      parameters:
+        - name: X-SentinelOps-Source
+          in: header
+          schema:
+            type: string
+            default: alertmanager
+        - name: X-SentinelOps-Event-Id
+          in: header
+          schema:
+            type: string
+            maxLength: 512
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Alert accepted and deduplicated into an incident.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IncidentId:
+      name: incidentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned by the preceding page.
+      schema:
+        type: string
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Quoted incident resource version from the most recent ETag.
+      schema:
+        type: string
+        pattern: '^"(0|[1-9][0-9]*)"$'
+        example: '"7"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+
+  headers:
+    ETag:
+      description: Quoted incident resource version for subsequent If-Match commands.
+      schema:
+        type: string
+        pattern: '^"(0|[1-9][0-9]*)"$'
+        example: '"7"'
+
+  responses:
+    BadRequest:
+      description: The request is malformed or contains invalid values.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    Unauthorized:
+      description: A valid bearer token is required.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    Forbidden:
+      description: The principal lacks the role or service scope.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    Conflict:
+      description: The command conflicts with the current workflow state.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    PreconditionFailed:
+      description: The incident changed after the caller read it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+
+  schemas:
+    PlatformRole:
+      type: string
+      enum: [OBSERVER, ON_CALL_OPERATOR, SRE_APPROVER, RUNBOOK_ADMIN, PLATFORM_ADMIN]
+    IncidentStatus:
+      type: string
+      enum:
+        - DETECTED
+        - TRIAGING
+        - DIAGNOSED
+        - AWAITING_APPROVAL
+        - EXECUTING
+        - VERIFYING
+        - RESOLVED
+        - SUPPRESSED
+        - ESCALATED
+    Severity:
+      type: string
+      enum: [sev1, sev2, sev3, sev4]
+    RiskLevel:
+      type: string
+      enum: [R0, R1, R2, R3]
+    ApprovalStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED, EXPIRED, INVALIDATED]
+    ExecutionStatus:
+      type: string
+      enum: [PENDING, RUNNING, VERIFYING, SUCCEEDED, FAILED, UNKNOWN, ESCALATED]
+    ApprovalDecision:
+      type: string
+      enum: [approve, reject]
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status, detail, instance, errorCode, traceId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        errorCode:
+          type: string
+        traceId:
+          type: string
+      additionalProperties: true
+
+    IncidentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - serviceId
+        - serviceKey
+        - title
+        - severity
+        - status
+        - version
+        - occurrenceCount
+        - openedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        serviceId:
+          type: string
+          format: uuid
+        serviceKey:
+          type: string
+        title:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        status:
+          $ref: "#/components/schemas/IncidentStatus"
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        occurrenceCount:
+          type: integer
+          format: int64
+          minimum: 1
+        openedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+
+    IncidentPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentSummary"
+        nextCursor:
+          type: [string, "null"]
+
+    Hypothesis:
+      type: object
+      additionalProperties: false
+      required: [rank, statement, confidence, evidenceRefs]
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+        statement:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        evidenceRefs:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    VerificationExpectation:
+      type: object
+      additionalProperties: false
+      required: [probe, successThreshold, attempts, intervalSeconds]
+      properties:
+        probe:
+          type: string
+        successThreshold:
+          type: number
+        attempts:
+          type: integer
+          minimum: 1
+        intervalSeconds:
+          type: integer
+          minimum: 0
+
+    DiagnosisProposal:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - incidentId
+        - incidentVersion
+        - diagnosisRunId
+        - summary
+        - hypotheses
+        - missingEvidence
+        - parameters
+        - riskLevel
+        - proposalHash
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        incidentId:
+          type: string
+          format: uuid
+        incidentVersion:
+          type: integer
+          format: int64
+        diagnosisRunId:
+          type: string
+          format: uuid
+        summary:
+          type: string
+        hypotheses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Hypothesis"
+        missingEvidence:
+          type: array
+          items:
+            type: string
+        runbookVersionId:
+          type: [string, "null"]
+          format: uuid
+        parameters:
+          type: object
+          additionalProperties: true
+        riskLevel:
+          $ref: "#/components/schemas/RiskLevel"
+        expectedVerification:
+          oneOf:
+            - $ref: "#/components/schemas/VerificationExpectation"
+            - type: "null"
+        proposalHash:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CockpitDiagnosis:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - diagnosisRunId
+        - incidentVersion
+        - summary
+        - hypotheses
+        - missingEvidence
+        - runbookVersionId
+        - runbookVersion
+        - runbookKey
+        - runbookName
+        - parameters
+        - riskLevel
+        - expectedVerification
+        - proposalHash
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        diagnosisRunId:
+          type: string
+          format: uuid
+        incidentVersion:
+          type: integer
+          format: int64
+        summary:
+          type: string
+        hypotheses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Hypothesis"
+        missingEvidence:
+          type: array
+          items:
+            type: string
+        runbookVersionId:
+          type: [string, "null"]
+          format: uuid
+        runbookVersion:
+          type: [integer, "null"]
+        runbookKey:
+          type: [string, "null"]
+        runbookName:
+          type: [string, "null"]
+        parameters:
+          type: object
+          additionalProperties: true
+        riskLevel:
+          $ref: "#/components/schemas/RiskLevel"
+        expectedVerification:
+          oneOf:
+            - $ref: "#/components/schemas/VerificationExpectation"
+            - type: "null"
+        proposalHash:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    EvidenceReference:
+      type: object
+      additionalProperties: false
+      required: [id, sourceType, sourceRef, contentHash, capturedAt, truncated]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceType:
+          type: string
+        sourceRef:
+          type: string
+        contentHash:
+          type: string
+        capturedAt:
+          type: string
+          format: date-time
+        truncated:
+          type: boolean
+
+    EvidenceSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        [id, sourceType, sourceRef, contentHash, capturedAt, truncated, redactedPayload]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceType:
+          type: string
+        sourceRef:
+          type: string
+        contentHash:
+          type: string
+        capturedAt:
+          type: string
+          format: date-time
+        truncated:
+          type: boolean
+        redactedPayload:
+          type: object
+          additionalProperties: true
+
+    CockpitApproval:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - proposalId
+        - proposalHash
+        - targetAlias
+        - status
+        - resourceVersion
+        - requiredApprovals
+        - approvals
+        - rejections
+        - requesterId
+        - requesterSubject
+        - requesterDisplayName
+        - independentApproverRequired
+        - createdAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        proposalId:
+          type: string
+          format: uuid
+        proposalHash:
+          type: string
+        targetAlias:
+          type: string
+        status:
+          $ref: "#/components/schemas/ApprovalStatus"
+        resourceVersion:
+          type: integer
+          format: int64
+        requiredApprovals:
+          type: integer
+        approvals:
+          type: integer
+        rejections:
+          type: integer
+        requesterId:
+          type: string
+          format: uuid
+        requesterSubject:
+          type: string
+        requesterDisplayName:
+          type: string
+        independentApproverRequired:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type: [string, "null"]
+          format: date-time
+
+    CockpitExecution:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - proposalId
+        - approvalRequestId
+        - status
+        - targetAlias
+        - fencingToken
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        proposalId:
+          type: string
+          format: uuid
+        approvalRequestId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ExecutionStatus"
+        targetAlias:
+          type: string
+        fencingToken:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+
+    IncidentCockpit:
+      type: object
+      additionalProperties: false
+      required: [incident, diagnosis, evidence, activeApproval, latestExecution]
+      properties:
+        incident:
+          $ref: "#/components/schemas/IncidentSummary"
+        diagnosis:
+          oneOf:
+            - $ref: "#/components/schemas/CockpitDiagnosis"
+            - type: "null"
+        evidence:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EvidenceReference"
+        activeApproval:
+          oneOf:
+            - $ref: "#/components/schemas/CockpitApproval"
+            - type: "null"
+        latestExecution:
+          oneOf:
+            - $ref: "#/components/schemas/CockpitExecution"
+            - type: "null"
+
+    IncidentTimelineItem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          sequence,
+          eventType,
+          actorType,
+          actorId,
+          summary,
+          traceId,
+          evidenceIds,
+          occurredAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        eventType:
+          type: string
+        actorType:
+          type: string
+        actorId:
+          type: string
+        source:
+          type: [string, "null"]
+        sourceEventId:
+          type: [string, "null"]
+        summary:
+          type: string
+          description: Server-generated allowlisted summary; raw event payloads are never returned.
+        traceId:
+          type: [string, "null"]
+          description: Validated distributed trace identifier when the producer supplied one.
+        evidenceIds:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+
+    IncidentTimelinePage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentTimelineItem"
+        nextCursor:
+          type: [string, "null"]
+
+    RequestApproval:
+      type: object
+      additionalProperties: false
+      required: [proposalId]
+      properties:
+        proposalId:
+          type: string
+          format: uuid
+
+    ApprovalDecisionCommand:
+      type: object
+      additionalProperties: false
+      required: [decision, proposalHash]
+      properties:
+        decision:
+          $ref: "#/components/schemas/ApprovalDecision"
+        comment:
+          type: string
+          maxLength: 2000
+        proposalHash:
+          type: string
+          minLength: 1
+
+    ApprovalCommandResult:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - incidentId
+        - proposalId
+        - proposalHash
+        - targetAlias
+        - status
+        - resourceVersion
+        - requiredApprovals
+        - approvals
+        - rejections
+        - incidentVersion
+        - expiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        incidentId:
+          type: string
+          format: uuid
+        proposalId:
+          type: string
+          format: uuid
+        proposalHash:
+          type: string
+        targetAlias:
+          type: string
+        status:
+          $ref: "#/components/schemas/ApprovalStatus"
+        resourceVersion:
+          type: integer
+          format: int64
+        requiredApprovals:
+          type: integer
+        approvals:
+          type: integer
+        rejections:
+          type: integer
+        incidentVersion:
+          type: integer
+          format: int64
+        expiresAt:
+          type: string
+          format: date-time
+
+    CreateExecution:
+      type: object
+      additionalProperties: false
+      required: [proposalId]
+      properties:
+        proposalId:
+          type: string
+          format: uuid
+
+    ExecutionCommandResult:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - incidentId
+        - proposalId
+        - approvalRequestId
+        - status
+        - fencingToken
+        - incidentVersion
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        incidentId:
+          type: string
+          format: uuid
+        proposalId:
+          type: string
+          format: uuid
+        approvalRequestId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ExecutionStatus"
+        fencingToken:
+          type: integer
+          format: int64
+        incidentVersion:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+
+    ManualVerificationResult:
+      type: object
+      additionalProperties: false
+      required: [incidentId, status, incidentVersion]
+      properties:
+        incidentId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [verifying]
+        incidentVersion:
+          type: integer
+          format: int64

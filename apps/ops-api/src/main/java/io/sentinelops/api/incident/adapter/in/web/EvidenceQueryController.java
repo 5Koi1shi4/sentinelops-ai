@@ -1,5 +1,7 @@
 package io.sentinelops.api.incident.adapter.in.web;
 
+import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -9,6 +11,8 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,25 +33,42 @@ public class EvidenceQueryController {
     }
 
     @GetMapping("/{id}/evidence")
-    List<EvidenceView> evidence(@PathVariable UUID id) {
-        boolean exists = jdbc.sql("select exists(select 1 from incident where id = :id)")
+    List<EvidenceView> evidence(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+        UUID serviceId = jdbc.sql("select service_id from incident where id = :id")
                 .param("id", id)
-                .query(Boolean.class)
-                .single();
-        if (!exists) {
-            throw new ApiProblemException(
-                    HttpStatus.NOT_FOUND, "incident_not_found", "The incident does not exist.");
-        }
+                .query(UUID.class)
+                .optional()
+                .orElseThrow(() -> new ApiProblemException(
+                        HttpStatus.NOT_FOUND,
+                        "incident_not_found",
+                        "The incident does not exist."));
+        authorize(CurrentPrincipal.from(jwt), serviceId);
         return jdbc.sql("""
                         select id, source_type, source_ref, redacted_payload::text,
                                content_hash, captured_at, truncated
                         from evidence_snapshot
                         where incident_id = :incidentId
                         order by captured_at, id
+                        limit 100
                         """)
                 .param("incidentId", id)
                 .query(this::mapEvidence)
                 .list();
+    }
+
+    private void authorize(CurrentPrincipal principal, UUID serviceId) {
+        if (!principal.canAccess(serviceId)
+                || !principal.hasAnyRole(
+                        PlatformRole.OBSERVER,
+                        PlatformRole.ON_CALL_OPERATOR,
+                        PlatformRole.SRE_APPROVER,
+                        PlatformRole.RUNBOOK_ADMIN,
+                        PlatformRole.PLATFORM_ADMIN)) {
+            throw new ApiProblemException(
+                    HttpStatus.FORBIDDEN,
+                    "access_denied",
+                    "The principal cannot view evidence for this service.");
+        }
     }
 
     private EvidenceView mapEvidence(ResultSet resultSet, int rowNumber) throws SQLException {

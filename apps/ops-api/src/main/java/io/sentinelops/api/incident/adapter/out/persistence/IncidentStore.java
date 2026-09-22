@@ -4,6 +4,7 @@ import io.sentinelops.api.incident.application.AlertEnvelope;
 import io.sentinelops.api.incident.application.IncidentSummary;
 import io.sentinelops.api.incident.application.IncidentTimelineItem;
 import io.sentinelops.api.incident.domain.IncidentStatus;
+import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -13,21 +14,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
-import tools.jackson.databind.ObjectMapper;
 
 @Repository
 public class IncidentStore {
 
     private final JdbcClient jdbc;
-    private final ObjectMapper objectMapper;
 
-    public IncidentStore(JdbcClient jdbc, ObjectMapper objectMapper) {
+    public IncidentStore(JdbcClient jdbc) {
         this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
     }
 
     public void lockDelivery(String source, String sourceEventId) {
@@ -205,7 +204,7 @@ public class IncidentStore {
 
     public List<IncidentSummary> list(
             IncidentStatus status,
-            UUID serviceId,
+            Set<UUID> serviceIds,
             String severity,
             Instant cursorTime,
             UUID cursorId,
@@ -223,9 +222,9 @@ public class IncidentStore {
             sql.append(" and p.status = :status");
             parameters.put("status", status.databaseValue());
         }
-        if (serviceId != null) {
-            sql.append(" and p.service_id = :serviceId");
-            parameters.put("serviceId", serviceId);
+        if (serviceIds != null) {
+            sql.append(" and p.service_id in (:serviceIds)");
+            parameters.put("serviceIds", serviceIds);
         }
         if (severity != null) {
             sql.append(" and p.severity = :severity");
@@ -244,11 +243,29 @@ public class IncidentStore {
 
     public List<IncidentTimelineItem> timeline(UUID incidentId, long afterSequence, int limit) {
         return jdbc.sql("""
-                        select id, seq_no, event_type, actor_type, actor_id,
-                               source, source_event_id, payload::text, occurred_at
-                        from incident_event
-                        where incident_id = :incidentId and seq_no > :afterSequence
-                        order by seq_no, id
+                        select ie.id, ie.seq_no, ie.event_type, ie.actor_type, ie.actor_id,
+                               ie.source, ie.source_event_id,
+                               case
+                                 when jsonb_typeof(ie.payload -> 'traceId') = 'string'
+                                   and length(ie.payload ->> 'traceId') between 1 and 128
+                                   and (ie.payload ->> 'traceId') ~ '^[A-Za-z0-9._:-]+$'
+                                 then ie.payload ->> 'traceId'
+                                 else null
+                               end as trace_id,
+                               array(
+                                 select pe.evidence_snapshot_id
+                                 from diagnosis_proposal_evidence pe
+                                 join diagnosis_proposal proposal
+                                   on proposal.id = pe.proposal_id
+                                  and proposal.incident_id = ie.incident_id
+                                 where pe.proposal_id::text = ie.payload ->> 'proposalId'
+                                 order by pe.evidence_snapshot_id
+                                 limit 100
+                               ) as evidence_ids,
+                               ie.occurred_at
+                        from incident_event ie
+                        where ie.incident_id = :incidentId and ie.seq_no > :afterSequence
+                        order by ie.seq_no, ie.id
                         limit :limit
                         """)
                 .param("incidentId", incidentId)
@@ -275,16 +292,50 @@ public class IncidentStore {
 
     private IncidentTimelineItem mapTimelineItem(ResultSet resultSet, int rowNumber)
             throws SQLException {
+        String eventType = resultSet.getString("event_type");
         return new IncidentTimelineItem(
                 resultSet.getObject("id", UUID.class),
                 resultSet.getLong("seq_no"),
-                resultSet.getString("event_type"),
+                eventType,
                 resultSet.getString("actor_type"),
                 resultSet.getString("actor_id"),
                 resultSet.getString("source"),
                 resultSet.getString("source_event_id"),
-                objectMapper.readTree(resultSet.getString("payload")),
+                timelineSummary(eventType),
+                resultSet.getString("trace_id"),
+                evidenceIds(resultSet),
                 instant(resultSet, "occurred_at"));
+    }
+
+    private List<UUID> evidenceIds(ResultSet resultSet) throws SQLException {
+        Array values = resultSet.getArray("evidence_ids");
+        try {
+            return List.of((UUID[]) values.getArray());
+        } finally {
+            values.free();
+        }
+    }
+
+    private String timelineSummary(String eventType) {
+        return switch (eventType) {
+            case "alert_received" -> "Alert received";
+            case "alert_recovered" -> "Alert recovery received";
+            case "diagnosis_started" -> "Diagnosis started";
+            case "diagnosis_succeeded" -> "Diagnosis completed";
+            case "diagnosis_validation_failed" -> "Diagnosis validation failed";
+            case "approval_requested" -> "Approval requested";
+            case "approval_granted" -> "Approval granted";
+            case "approval_rejected" -> "Approval rejected";
+            case "approval_invalidated" -> "Approval invalidated";
+            case "execution_requested" -> "Execution requested";
+            case "execution_completed" -> "Execution completed";
+            case "execution_failed" -> "Execution failed";
+            case "execution_authorization_invalidated" -> "Execution authorization invalidated";
+            case "verification_succeeded" -> "Recovery verification succeeded";
+            case "verification_failed" -> "Recovery verification failed";
+            case "manual_verification_requested" -> "Manual verification requested";
+            default -> "Incident event recorded";
+        };
     }
 
     private Instant instant(ResultSet resultSet, String column) throws SQLException {

@@ -1,5 +1,7 @@
 package io.sentinelops.api.incident.application;
 
+import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.adapter.out.persistence.IncidentStore;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.incident.domain.IncidentCommand;
@@ -118,13 +120,19 @@ public class IncidentApplicationService {
             UUID serviceId,
             String severity,
             String cursor,
-            Integer requestedPageSize) {
+            Integer requestedPageSize,
+            CurrentPrincipal principal) {
+        authorizeViewerRole(principal);
+        Set<UUID> visibleServiceIds = visibleServiceIds(principal, serviceId);
+        if (visibleServiceIds != null && visibleServiceIds.isEmpty()) {
+            return new IncidentPage(List.of(), null);
+        }
         int pageSize = pageSize(requestedPageSize);
         String severityFilter = normalizeSeverity(severity);
         var decoded = decodeIncidentCursor(cursor);
         var rows = store.list(
                 status,
-                serviceId,
+                visibleServiceIds,
                 severityFilter,
                 decoded == null ? null : decoded.openedAt(),
                 decoded == null ? null : decoded.id(),
@@ -137,8 +145,11 @@ public class IncidentApplicationService {
 
     @Transactional(readOnly = true)
     public IncidentTimelinePage timeline(
-            UUID incidentId, String cursor, Integer requestedPageSize) {
-        requireSummary(incidentId);
+            UUID incidentId,
+            String cursor,
+            Integer requestedPageSize,
+            CurrentPrincipal principal) {
+        authorizeViewer(principal, requireSummary(incidentId).serviceId());
         int pageSize = pageSize(requestedPageSize);
         long afterSequence = decodeTimelineCursor(cursor);
         var rows = store.timeline(incidentId, afterSequence, pageSize + 1);
@@ -152,6 +163,40 @@ public class IncidentApplicationService {
     private IncidentSummary requireSummary(UUID incidentId) {
         return store.findSummary(incidentId).orElseThrow(() -> new ApiProblemException(
                 HttpStatus.NOT_FOUND, "incident_not_found", "The incident does not exist."));
+    }
+
+    private Set<UUID> visibleServiceIds(CurrentPrincipal principal, UUID requestedServiceId) {
+        if (requestedServiceId != null) {
+            authorizeViewer(principal, requestedServiceId);
+            return Set.of(requestedServiceId);
+        }
+        return principal.roles().contains(PlatformRole.PLATFORM_ADMIN)
+                ? null
+                : principal.serviceIds();
+    }
+
+    private void authorizeViewer(CurrentPrincipal principal, UUID serviceId) {
+        authorizeViewerRole(principal);
+        if (!principal.canAccess(serviceId)) {
+            throw new ApiProblemException(
+                    HttpStatus.FORBIDDEN,
+                    "access_denied",
+                    "The principal cannot view incidents for this service.");
+        }
+    }
+
+    private void authorizeViewerRole(CurrentPrincipal principal) {
+        if (!principal.hasAnyRole(
+                PlatformRole.OBSERVER,
+                PlatformRole.ON_CALL_OPERATOR,
+                PlatformRole.SRE_APPROVER,
+                PlatformRole.RUNBOOK_ADMIN,
+                PlatformRole.PLATFORM_ADMIN)) {
+            throw new ApiProblemException(
+                    HttpStatus.FORBIDDEN,
+                    "access_denied",
+                    "The principal cannot view incidents.");
+        }
     }
 
     private String sourceEventId(AlertEnvelope alert) {

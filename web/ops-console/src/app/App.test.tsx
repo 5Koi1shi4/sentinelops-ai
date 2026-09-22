@@ -12,3 +12,14 @@ it("renders the incident-first navigation", () => {
         screen.getByRole("navigation", { name: "主导航" }),
     ).toBeInTheDocument();
 });
+
+it("provides a focusable destination for the skip link", () => {
+    render(<App />);
+
+    expect(screen.getByRole("link", { name: "跳至主要内容" })).toHaveAttribute(
+        "href",
+        "#main-content",
+    );
+    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
+    expect(screen.getByRole("main")).toHaveAttribute("tabindex", "-1");
+});
