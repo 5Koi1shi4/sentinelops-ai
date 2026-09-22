@@ -24,6 +24,8 @@ SentinelOps AI 是一个面向单组织内部使用的事故响应平台。Stage
 
 Stage 1 使用固定的 Demo 证据与确定性诊断适配器；Prometheus/Alertmanager 告警、OIDC 登录、审批、执行和恢复探针是真实链路。真实监控证据与模型集成按 Stage 2A 计划推进。
 
+Stage 2A 当前实施位置、设计修订和验证命令见 [实施进度](docs/runbooks/stage-2a-progress.md)。
+
 > 这些密码、客户端密钥和数据库默认值只用于隔离的本地 Demo。不要把它们复用到测试共享环境或生产环境。
 
 可在启动前设置 `SENTINELOPS_DEMO_EXECUTOR_CLIENT_SECRET` 与 `SENTINELOPS_DEMO_CONTROLLER_CLIENT_SECRET`；Compose 会把同一值传给客户端和 Keycloak，realm 导入使用 [Keycloak 环境变量占位符](https://www.keycloak.org/server/importExport)。更改后须重新创建 Keycloak 容器以重新导入。

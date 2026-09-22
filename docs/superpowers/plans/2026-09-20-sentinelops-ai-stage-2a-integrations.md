@@ -57,7 +57,7 @@
 
 Task 1 交付独立适配器和契约测试，不在告警事务中调用网络。Prometheus 与 Loki 是可同时注册的两种来源；Task 2 的 `EvidenceCaptureService` 是唯一真实证据冻结边界，Task 4 在事务外诊断阶段调用它。Task 8 配置 `sentinelops.evidence.mode=real` 并禁用 `DemoAlertEvidenceCollector`；`deterministic` 仅保留现有 Demo/CI 路径。不得把 `EvidenceSource` 直接接到事务中的 `AlertEvidenceCollector.capture`。
 
-- [ ] **Step 1: Write failing adapter contract tests**
+- [x] **Step 1: Write failing adapter contract tests**
 
 ```java
 interface EvidenceSourceContractTest {
@@ -79,7 +79,7 @@ interface EvidenceSourceContractTest {
 
 Prometheus-specific tests assert `/api/v1/query_range`, configured query ID expansion, step/window caps, and rejection of a query string supplied as a parameter. Loki tests assert `/loki/api/v1/query_range`, backward direction, line limit, label allowlist, and deterministic truncation metadata.
 
-- [ ] **Step 2: Run adapter tests and observe failure**
+- [x] **Step 2: Run adapter tests and observe failure**
 
 Run:
 
@@ -89,7 +89,7 @@ Run:
 
 Expected: FAIL because source contracts and adapters do not exist.
 
-- [ ] **Step 3: Implement immutable typed query contracts**
+- [x] **Step 3: Implement immutable typed query contracts**
 
 ```java
 public record EvidenceQuery(
@@ -116,7 +116,7 @@ public record EvidenceBudget(int maxItems, int maxBytes, Duration maxWindow) {
 
 Resolve `queryId` through service-catalog configuration. Reject unknown template parameters and values that fail configured regex/enum constraints. Use `RestClient` with 2-second connection timeout, 8-second total attempt deadline (including response-body consumption), bounded response buffering, and Micrometer observations tagged only by configured source/query ID/result. Disable transport URL/query/error observations that could include expanded parameters. Reject redirects and malformed provider shapes; never retry body-limit, schema, authorization or rate-limit failures.
 
-- [ ] **Step 4: Implement normalized, capped provider responses**
+- [x] **Step 4: Implement normalized, capped provider responses**
 
 Prometheus output contains timestamp/value pairs, metric labels filtered by allowlist, provider warnings, time range, and `truncated`. Loki output contains timestamp/message pairs, allowed labels, time range, and `truncated`. Sort normalized output before hashing so provider ordering differences do not create duplicate evidence.
 
@@ -124,7 +124,9 @@ Prometheus output contains timestamp/value pairs, metric labels filtered by allo
 
 Use Resilience4j core decorators for one retry on connection reset/502/503 and a circuit breaker; do not retry 400/401/403. Configuration is explicit Java beans, not the unresolved Spring Boot starter integration.
 
-- [ ] **Step 5: Verify provider errors and bounded output**
+审查补强：连接或完整响应超时计入熔断但不重试；熔断按配置的 scheme/host/port/endpoint path 隔离，不将动态 query 纳入 key 或遥测。归一化最多处理跨 series 合计 10,000 条样本，超过即拒绝，先于排序与快照创建；该解析硬上限独立于调用方更小的返回条数预算。
+
+- [x] **Step 5: Verify provider errors and bounded output**
 
 契约补充：预算构造器校验服务端硬上限和 Duration 溢出，配置可以更严格但不能由模型提高；传输层读到 provider cap 后立即关闭响应，JSON 解析器不能先读完整 body；非 identity 压缩响应必须显式拒绝或在解压后再限长，不能形成解压炸弹。补测 HTTP 200 的 error envelope、错误 resultType、畸形样本、数值时间排序、reset/502/503 重试、熔断与全响应 deadline。所有错误使用稳定代码，不携带 provider body 或带 query 的 URL。
 
@@ -136,7 +138,7 @@ Run:
 
 Expected: PASS; WireMock verifies no request leaves the configured host, 429 becomes typed `EvidenceSourceRateLimited`, and response bodies above the cap never reach the persistence boundary.
 
-- [ ] **Step 6: Commit evidence adapters**
+- [x] **Step 6: Commit evidence adapters**
 
 ```powershell
 git add apps/ops-api
