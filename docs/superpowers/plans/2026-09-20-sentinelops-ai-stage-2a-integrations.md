@@ -23,6 +23,15 @@
 - Do not log full prompts, tool arguments/results, evidence bodies, provider keys, or raw model content.
 - Tests precede implementation and each task ends with a focused commit.
 
+## 2026-09-22 实施衔接修订
+
+- Stage 1 已在 `cb2fb0b` 完成并标记 `v0.1.0-demo`，验收证据见 `docs/runbooks/stage-1-verification.md`。继续使用现有 `feat/stage-1-demo` worktree。
+- 与已提交代码保持一致，事故和诊断运行 ID 使用 `UUID`；本阶段不另建重复 ID 类型。
+- Stage 1 已占用 Flyway V1–V11。本阶段证据约束使用 V12，知识检索使用 V13，诊断领取使用 V14，Eval 使用 V15；Stage 2B 从 V16 开始，禁止修改既有迁移。新增迁移改变此顺序时，在编码前同步后续文件名。
+- 适配器产出的 `CapturedEvidence` 仍是不可信内存数据。Task 1 的 hash 只用于规范化一致性检查；Task 2 必须对脱敏后的规范 JSON 重新计算持久化 hash，原始内容及原始 hash 不进入数据库、工具结果或遥测。
+- 证据查询与模型调用必须在数据库事务外运行。Task 2 使用短事务校验事故/运行归属并冻结结果；Task 4 把诊断拆为领取、外部调用、条件提交三段，重复请求和过期结果不得创建第二份提案。
+- `*IT` 测试当前由显式 Surefire `-Dtest=... test` 命令运行；不要仅凭默认 `verify` 声称集成验收通过。阶段验收继续分别运行单元测试和真实依赖测试。
+
 ---
 
 ## Task 1: Replace fixed evidence with real bounded Prometheus and Loki adapters
@@ -45,6 +54,8 @@
 - Produces: `EvidenceSource.capture(EvidenceQuery, EvidenceBudget): CapturedEvidence`.
 - Produces: source types `prometheus` and `loki`.
 - Consumes: only configured source base URLs and allowlisted query templates keyed by service; model/user input may fill typed template parameters but cannot provide a URL or arbitrary query.
+
+Task 1 交付独立适配器和契约测试，不在告警事务中调用网络。Prometheus 与 Loki 是可同时注册的两种来源；Task 2 的 `EvidenceCaptureService` 是唯一真实证据冻结边界，Task 4 在事务外诊断阶段调用它。Task 8 配置 `sentinelops.evidence.mode=real` 并禁用 `DemoAlertEvidenceCollector`；`deterministic` 仅保留现有 Demo/CI 路径。不得把 `EvidenceSource` 直接接到事务中的 `AlertEvidenceCollector.capture`。
 
 - [ ] **Step 1: Write failing adapter contract tests**
 
@@ -82,7 +93,7 @@ Expected: FAIL because source contracts and adapters do not exist.
 
 ```java
 public record EvidenceQuery(
-    IncidentId incidentId,
+    UUID incidentId,
     UUID serviceId,
     String queryId,
     Map<String, String> parameters,
@@ -103,15 +114,19 @@ public record EvidenceBudget(int maxItems, int maxBytes, Duration maxWindow) {
 }
 ```
 
-Resolve `queryId` through service-catalog configuration. Reject unknown template parameters and values that fail configured regex/enum constraints. Use `RestClient` with 2-second connection timeout, 8-second response timeout, bounded response buffering, and Micrometer observations tagged only by source/query ID/result.
+Resolve `queryId` through service-catalog configuration. Reject unknown template parameters and values that fail configured regex/enum constraints. Use `RestClient` with 2-second connection timeout, 8-second total attempt deadline (including response-body consumption), bounded response buffering, and Micrometer observations tagged only by configured source/query ID/result. Disable transport URL/query/error observations that could include expanded parameters. Reject redirects and malformed provider shapes; never retry body-limit, schema, authorization or rate-limit failures.
 
 - [ ] **Step 4: Implement normalized, capped provider responses**
 
 Prometheus output contains timestamp/value pairs, metric labels filtered by allowlist, provider warnings, time range, and `truncated`. Loki output contains timestamp/message pairs, allowed labels, time range, and `truncated`. Sort normalized output before hashing so provider ordering differences do not create duplicate evidence.
 
+协议依据：[Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/)、[Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/)（2026-09-22 核对）。Prometheus 支持小数秒时间戳，range 起止均包含端点；step 只减少单个 series 的采样数，客户端仍须限制跨 series 总条数。Loki 使用纳秒时间戳字符串。按数值时间排序，不按字符串字典序排序；不支持的 histogram 等响应类型显式报错。
+
 Use Resilience4j core decorators for one retry on connection reset/502/503 and a circuit breaker; do not retry 400/401/403. Configuration is explicit Java beans, not the unresolved Spring Boot starter integration.
 
 - [ ] **Step 5: Verify provider errors and bounded output**
+
+契约补充：预算构造器校验服务端硬上限和 Duration 溢出，配置可以更严格但不能由模型提高；传输层读到 provider cap 后立即关闭响应，JSON 解析器不能先读完整 body；非 identity 压缩响应必须显式拒绝或在解压后再限长，不能形成解压炸弹。补测 HTTP 200 的 error envelope、错误 resultType、畸形样本、数值时间排序、reset/502/503 重试、熔断与全响应 deadline。所有错误使用稳定代码，不携带 provider body 或带 query 的 URL。
 
 Run:
 
@@ -135,6 +150,7 @@ git commit -m "feat: add bounded Prometheus and Loki evidence"
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/application/evidence/DefaultEvidenceRedactor.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/application/evidence/EvidenceCaptureService.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/out/persistence/EvidenceStore.java`
+- Create: `apps/ops-api/src/main/resources/db/migration/V12__evidence_capture_integrity.sql`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/tool/ReadOnlyTool.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/tool/ToolContext.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/tool/EvidenceTools.java`
@@ -145,9 +161,11 @@ git commit -m "feat: add bounded Prometheus and Loki evidence"
 
 **Interfaces:**
 - Produces: `EvidenceRedactor.redact(JsonNode): RedactionResult` with count and applied rule IDs.
-- Produces: `EvidenceCaptureService.captureAndFreeze(IncidentId, DiagnosisRunId, EvidencePlan): List<EvidenceSnapshot>`.
+- Produces: `EvidenceCaptureService.captureAndFreeze(UUID incidentId, UUID diagnosisRunId, EvidencePlan): List<EvidenceSnapshot>`.
 - Produces: read tools `queryMetrics`, `queryLogs`, and `getEvidence`, all scoped by server-side `ToolContext`.
 - Consumes: EvidenceSource adapters from Task 1 and evidence table from Stage 1.
+
+实施接口补充：`EvidencePlan(UUID serviceId, Instant from, Instant to, List<EvidenceRequest> requests, EvidenceBudget budget)` 是后端构造的不可变计划；`EvidenceRequest(String sourceType, String queryId, Map<String,String> parameters)` 只引用注册查询。最多六个 request，`captureAndFreeze` 在任何外部调用前校验 run/incident/service 归属，最终持久化事务再次校验。`EvidenceSnapshot` 返回数据库 ID、来源、查询 ID、捕获时间、hash、截断/脱敏统计和 JSON 的防御性副本；不能通过 accessor 修改已冻结输入。公开 `incident.application.evidence` 的窄 NamedInterface，供 diagnosis 工具使用，禁止工具直接依赖 Repository。
 
 - [ ] **Step 1: Write failing secret/prompt-injection tests**
 
@@ -190,10 +208,12 @@ Rules, in order: configured JSON-pointer denylist; case-insensitive key denylist
 
 Canonicalize the redacted JSON, then calculate SHA-256. Persist query spec, redacted payload, hash, source/time, truncation and diagnosis run ID in one transaction. Duplicate `(incident_id, content_hash)` reuses the prior snapshot.
 
+V12 adds database enforcement that a snapshot/run link belongs to the same incident; keep both tables append-only. A reused snapshot keeps its original capture metadata and first run ID; link every authorized consuming run through `diagnosis_run_evidence`. Use atomic `ON CONFLICT DO NOTHING` plus a subsequent read instead of updating immutable rows. Include source type, query ID and time window in the canonical redacted payload to avoid conflating equal values from different sources. Hash after redaction and final byte capping. Recheck incident/service/run ownership and running state in the freeze transaction; foreign or completed runs cannot gain new evidence. No provider call occurs while a transaction is active.
+
 - [ ] **Step 4: Implement typed read tools with server-owned context**
 
 ```java
-public record ToolContext(IncidentId incidentId, DiagnosisRunId runId, UUID serviceId,
+public record ToolContext(UUID incidentId, UUID runId, UUID serviceId,
                           Instant evidenceFrom, Instant evidenceTo) {}
 
 public sealed interface ReadOnlyTool permits MetricReadTool, LogReadTool, EvidenceReadTool {
@@ -207,6 +227,8 @@ Tool input schemas accept only a registered query ID plus typed parameters. The 
 - [ ] **Step 5: Verify immutable capture and telemetry privacy**
 
 `EvidenceCaptureIT` calls the same source twice, verifies hash reuse, then changes one redacted-safe value and verifies a new snapshot. Assert captured Micrometer tags contain IDs/status only, not payload fragments.
+
+同时覆盖：仅 secret 值变化仍复用脱敏后 hash；相同数值但不同 source/query/window 不复用；并发采集同一内容只产生一个 snapshot；不同 run 可追加关联而不能修改旧快照；越事故、越 service、已结束 run 在发起 HTTP 前被拒绝；源调用期间没有活动数据库事务；数据库直接插入跨事故 run/evidence 关联失败；正文、warning、标签和 query metadata 全部脱敏且不可经返回对象变更；`getEvidence` 只返回当前 run 已关联的快照。
 
 Run:
 
@@ -226,7 +248,7 @@ git commit -m "feat: freeze and redact diagnosis evidence"
 ## Task 3: Add Runbook authoring, immutable publishing, and hybrid pgvector search
 
 **Files:**
-- Create: `apps/ops-api/src/main/resources/db/migration/V7__knowledge_search.sql`
+- Create: `apps/ops-api/src/main/resources/db/migration/V13__knowledge_search.sql`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/knowledge/application/EmbeddingGateway.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/knowledge/application/DeterministicEmbeddingGateway.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/knowledge/application/KnowledgeChunker.java`
@@ -313,16 +335,19 @@ Use batches of at most 100 rows. Do not call embedding providers while holding t
 
 ```sql
 with lexical as (
-  select id, row_number() over (order by ts_rank_cd(search_vector, websearch_to_tsquery('simple', :q)) desc, id) lex_rank
-  from knowledge_chunk
-  where service_id = :service_id
-    and search_vector @@ websearch_to_tsquery('simple', :q)
+  select kc.id, row_number() over (order by ts_rank_cd(kc.search_vector, websearch_to_tsquery('simple', :q)) desc, kc.id) lex_rank
+  from knowledge_chunk kc
+  join runbook_version rv on rv.id = kc.runbook_version_id and rv.lifecycle = 'published'
+  where kc.service_id = :service_id
+    and kc.search_vector @@ websearch_to_tsquery('simple', :q)
+  order by ts_rank_cd(kc.search_vector, websearch_to_tsquery('simple', :q)) desc, kc.id
   limit :candidate_limit
 ), semantic as (
-  select id, row_number() over (order by embedding <=> cast(:embedding as vector), id) sem_rank
-  from knowledge_chunk
-  where service_id = :service_id
-  order by embedding <=> cast(:embedding as vector), id
+  select kc.id, row_number() over (order by kc.embedding <=> cast(:embedding as vector), kc.id) sem_rank
+  from knowledge_chunk kc
+  join runbook_version rv on rv.id = kc.runbook_version_id and rv.lifecycle = 'published'
+  where kc.service_id = :service_id
+  order by kc.embedding <=> cast(:embedding as vector), kc.id
   limit :candidate_limit
 ), fused as (
   select coalesce(l.id, s.id) id,
@@ -359,6 +384,7 @@ git commit -m "feat: add versioned hybrid Runbook search"
 ## Task 4: Integrate Spring AI 2.0 with a bounded read-only tool loop
 
 **Files:**
+- Create: `apps/ops-api/src/main/resources/db/migration/V14__diagnosis_claim_control.sql`
 - Modify: `apps/ops-api/pom.xml`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/model/ModelGateway.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/model/ModelDiagnosisRequest.java`
@@ -430,6 +456,8 @@ Expose only four read tools per diagnosis call. Pass `ToolContext` through Sprin
 
 `ModelBackedDiagnosisEngine` implements the Stage 1 `DiagnosisEngine`. It creates `ModelDiagnosisRequest` only from the server-frozen incident version, evidence IDs, authorized service context, published Runbook corpus version, prompt version, and fixed `ToolBudget`; it maps the gateway result back to `DiagnosisProposalDraft`. `DiagnosisApplicationService` remains provider-agnostic and always re-runs `DiagnosisPolicy` before persistence. Use this engine for every provider profile. `DeterministicModelGateway` delegates the proven Stage 1 deterministic rules, `SpringAiModelGateway` serves both real profiles, and `UnavailableModelGateway` returns typed `AI_PROVIDER_UNAVAILABLE` for manual-only mode. Add a context test that exactly one `DiagnosisEngine` and one `ModelGateway` bean exist in every supported profile.
 
+Replace the Stage 1 synchronous `idempotency.execute` transaction around `engine.diagnose`: first atomically claim the command/run and capture the incident version, then collect evidence/call the model without a database transaction, finally conditionally persist the validated proposal and terminal run/command response. Enforce one active diagnosis per incident with a database constraint, a bounded run lease and owner token; a timed-out/reclaimed caller cannot publish a late result. Replay completed requests and report in-progress conflicts without a second provider invocation. Recheck state, version, service authorization and published Runbook lifecycle before the final commit. Cover concurrent calls, connection-pool availability during a blocked provider, failure/recovery and late-result rejection in real PostgreSQL tests.
+
 - [ ] **Step 5: Implement structured response and one repair attempt**
 
 Build a dedicated diagnosis `ChatClient` with the versioned system prompt, only the four read callbacks, and a `StructuredOutputValidationAdvisor` configured with `outputType(DiagnosisProposalDraft.class)` and `maxRepeatAttempts(1)`. Call `responseEntity(DiagnosisProposalDraft.class)` to retain usage metadata. This yields one initial response plus at most one schema-repair response; do not also enable per-call `validateSchema()`, whose default would permit more retries. Enforce the 90-second wall clock outside the client call. The repair context contains validation codes and the invalid response hash, not raw secret-bearing evidence; a second failure returns typed `MODEL_OUTPUT_INVALID`.
@@ -465,7 +493,7 @@ git commit -m "feat: add bounded Spring AI diagnosis"
 ## Task 5: Persist reproducible AI Eval datasets, runs, and release thresholds
 
 **Files:**
-- Create: `apps/ops-api/src/main/resources/db/migration/V8__ai_eval.sql`
+- Create: `apps/ops-api/src/main/resources/db/migration/V15__ai_eval.sql`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/eval/EvalDatasetImporter.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/eval/EvalApplicationService.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/eval/RuleBasedEvaluator.java`
@@ -529,7 +557,7 @@ Expected: FAIL because schema, importer, evaluator, and data are incomplete.
 
 - [ ] **Step 4: Implement immutable datasets and immutable-identity Eval runs**
 
-Create the exact `V8__ai_eval.sql` persistence boundary:
+Create the exact `V15__ai_eval.sql` persistence boundary:
 
 ```sql
 create table eval_dataset (
@@ -853,6 +881,8 @@ Expected: FAIL before Loki/collector wiring and real evidence profile are comple
 - [ ] **Step 3: Wire real evidence without changing domain code**
 
 Add Loki 3.6.7 and OpenTelemetry Collector 0.161.0 to Demo Compose. Send structured Demo service logs through OTLP or a configured collector path to Loki. Configure service-catalog query IDs for error rate, latency, pool pending and acquire-timeout logs. Do not expose Loki directly beyond localhost development binding.
+
+显式选择 `sentinelops.evidence.mode=real`，在保留 demo-service 故障入口的同时关闭固定 `DemoAlertEvidenceCollector`。用 context/集成测试证明 real 模式同时具有 Prometheus/Loki 来源、恰好一个 capture 编排器，且新事故没有固定 `E-12`/`E-13` 快照；恢复验证继续使用已批准的 Runbook probe。
 
 - [ ] **Step 4: Implement the Stage 2A verification script**
 

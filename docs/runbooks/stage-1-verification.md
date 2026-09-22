@@ -13,6 +13,8 @@
 
 本地完整工件目录：`build/verification/20260922-143158/`（Git 忽略）。
 
+2026-09-22 接续实施时核对：`v0.1.0-demo` 指向 `cb2fb0b68938c9be8d296ee7ff2dcef1c161ff70`。保留工件中的 `maven-verify.log`、`maven-integration.log` 均以 `BUILD SUCCESS` 结束，`playwright-e2e.log` 记录 `1 passed`。这是对既有验收记录的核验；接续期间的新测试结果单独记录，不冒充此里程碑的重跑。
+
 本轮新增回归覆盖空事故队列自动发现新告警，以及已关闭事故收到迟到恢复信号后保持同一事故 ID。两项回归均先复现失败后验证修复。
 
 Stage 1 只声明 Demo 里程碑：监控证据和模型为确定性适配器；真实证据、模型与生产加固继续按 Stage 2A / 2B 实施。
