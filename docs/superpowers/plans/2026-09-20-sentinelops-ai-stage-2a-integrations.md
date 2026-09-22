@@ -253,6 +253,12 @@ git commit -m "feat: freeze and redact diagnosis evidence"
 
 ## Task 3: Add Runbook authoring, immutable publishing, and hybrid pgvector search
 
+实施细化（2026-09-22）：草稿独立保存 `markdown` 与递增 `revision`，编辑清除评审，创建者和最后编辑者均不能评审；评审后才能发布。所有写接口使用 Idempotency-Key，编辑/评审/发布使用 If-Match revision。发布前在事务外准备 embedding，最终幂等事务锁定版本并重新核对 revision、内容 checksum、评审和生命周期，原子写入分块、发布状态与审计。definition checksum 保持 canonical JSON SHA-256 base64url，检索正文单独冻结；已发布到 retired 的原有仅生命周期转换保持兼容。
+
+当前可发布定义采用现有 Executor 实际支持的严格 JSON Schema 子集：`demo-http`、`recover_connection_pool`、R1、单步、replicas 固定为 1，以及 `demo_checkout_health` 验证；尚未注册的适配器、操作与回滚定义拒绝发布，后续生产适配器任务再显式扩展。不接受任意 JSON Schema 关键字或外部引用。deterministic embedding 只在 test/core/demo 且非 production 的显式 profile 注入；其他 profile 缺少 provider 时知识发布/搜索明确返回不可用。
+
+知识检索向量固定 1536 维且必须有限、非零，按 embedding model 隔离；入库与查询前以 double 精度计算模长并归一化，避免 pgvector 浮点运算溢出或下溢。服务范围来自授权后的应用查询，不接收客户端向量。分块长度按 Unicode code point 计，文档最多 120000 个 Unicode code point（与 OpenAPI maxLength 一致）、最多 200 块，重复内容去重；完整段落保留边界，超长段落切分时保留最多 150 个 UTF-16 code unit 的完整字符重叠。结果最多 10 条，每路候选最多 50 条，包含 runbook key、version ID/number、chunk ID/number、正文、各路排名/分数及融合分数。数据库检查 chunk 服务归属，并固定 Runbook 的 key/service 身份。发布新版本不会自动撤销旧版本，检索读取所有仍为 published 的精确版本；撤销沿用现有仅 lifecycle 改为 retired 的规则，已审批引用保持版本固定。
+
 **Files:**
 - Create: `apps/ops-api/src/main/resources/db/migration/V13__knowledge_search.sql`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/knowledge/application/EmbeddingGateway.java`
@@ -272,7 +278,7 @@ git commit -m "feat: freeze and redact diagnosis evidence"
 - Produces: `KnowledgeSearch.search(KnowledgeQuery, int): List<KnowledgeHit>` with lexical/vector/fused ranks and source citation.
 - Consumes: `runbook`, `runbook_version`, service scope, and Runbook admin authorization.
 
-- [ ] **Step 1: Write failing publish and ranking tests**
+- [x] **Step 1: Write failing publish and ranking tests**
 
 ```java
 @Test void publishedVersionCannotBeUpdatedOrDeleted() {}
@@ -290,7 +296,7 @@ void hybridSearchReturnsVersionedCitationAndBothScores() {
 }
 ```
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 Run:
 
@@ -300,7 +306,7 @@ Run:
 
 Expected: FAIL because knowledge schema/search and authoring service are absent.
 
-- [ ] **Step 3: Add generated full-text and fixed-dimension vector storage**
+- [x] **Step 3: Add generated full-text and fixed-dimension vector storage**
 
 ```sql
 create table knowledge_chunk (
@@ -331,13 +337,13 @@ for each row execute function reject_row_mutation();
 
 Retain and exercise the Stage 1 database trigger that blocks content mutation/deletion of published `runbook_version` rows while allowing a content-identical `published -> retired` lifecycle change. The new `knowledge_chunk` trigger makes indexed published chunks append-only. Application checks remain for friendly errors, but PostgreSQL is the final guard.
 
-- [ ] **Step 4: Implement deterministic chunking and publishing transaction**
+- [x] **Step 4: Implement deterministic chunking and publishing transaction**
 
 Chunk by Markdown headings and paragraph boundaries; maximum 1,200 characters and 150-character overlap. The chunker returns stable `(chunkNo, content, contentHash)`. Publishing validates JSON Schema, adapter/operation allowlists, verification spec, rollback coverage, reviewer distinctness, and embedding dimension; then updates lifecycle and batch-inserts chunks in one transaction.
 
 Use batches of at most 100 rows. Do not call embedding providers while holding the publish transaction: compute/validate draft embeddings first, then lock the draft version, recheck checksum/state, and insert/publish quickly.
 
-- [ ] **Step 5: Implement reciprocal-rank fusion in explicit SQL**
+- [x] **Step 5: Implement reciprocal-rank fusion in explicit SQL**
 
 ```sql
 with lexical as (
@@ -370,7 +376,7 @@ limit :limit;
 
 Cap `candidate_limit` at 50 and result `limit` at 10. Return only authorized service chunks.
 
-- [ ] **Step 6: Verify migration, immutability, and ranking**
+- [x] **Step 6: Verify migration, immutability, and ranking**
 
 Run:
 
@@ -380,7 +386,7 @@ Run:
 
 Expected: PASS against real pgvector; `EXPLAIN` fixture confirms GIN/HNSW indexes are eligible, and draft/other-service chunks never appear.
 
-- [ ] **Step 7: Commit Runbook knowledge**
+- [x] **Step 7: Commit Runbook knowledge**
 
 ```powershell
 git add apps/ops-api

@@ -50,8 +50,37 @@
 
 最终后端构建：`build/stage2a-task2-reviewed-reactor.log`，152 项通过（API 125、Executor 26、Demo 1）。完整真实依赖集成：`build/stage2a-task2-reviewed-integration.log`，105 项通过（API 93、Executor 3、Demo 9），包含现有 Demo 后端流程回归。两条命令均退出 0，无失败或跳过。独立复审确认低条数预算、凭据转义/重叠和归一化资源边界的修正已闭环。
 
+## Task 3：Runbook 发布与混合检索
+
+已完成草稿创建/修改、版本列表/差异、独立评审和发布 API，检索只返回已发布且属于授权服务、相同 embedding 模型的知识。接口与生成的 TypeScript 类型同步更新；独立 Spec / Quality 审查及增量复审均已通过。
+
+- 草稿使用递增 revision 和 If-Match，所有写命令幂等；编辑清除旧评审，创建者和最后编辑者均不能评审。变更、评审和发布追加审计记录。
+- 版本 diff 使用单条 SQL 的一致快照，避免并发编辑造成自比较出现差异；跨 Runbook 比较返回稳定 409。授权但不存在的服务在创建和检索时统一返回 404。
+- 发布先在事务外生成分块与向量，再于短事务锁定版本，重新核对 revision、正文、definition checksum、reviewer 和生命周期；分块与发布原子提交，批量写入最多 100 行。并发重放只生成一份冻结内容。
+- V13 增加全文/1536 维向量索引和分块只追加约束；数据库校验服务归属并固定 Runbook 身份。已发布内容不能修改或删除，内容不变的 published → retired 仍可执行。
+- Markdown 分块保留段落/标题边界；超长段落按完整 Unicode 字符切分，最长 1200 code point，重叠不超过 150 UTF-16 code unit；文档最多 120000 code point、200 块，相同正文去重。
+- 显式 SQL 使用全文与余弦候选的 reciprocal-rank fusion，每路候选 50、结果最多 10，返回精确版本、chunk、各路排名/分数和融合分数。真实 PostgreSQL EXPLAIN 验证 GIN/HNSW 可用。
+- 向量维度、数量、有限值和非零检查严格；在入库/查询前归一化，避免极大/极小有限值导致余弦失真。provider 失败不留下半发布版本，也不返回其私有错误信息。
+
+当前定义校验只放行已注册 Executor 实际支持的 `demo-http` 单步 `recover_connection_pool`、固定 replicas=1、R1 与预声明健康验证；未知操作、任意 Shell/SQL 和未注册回滚均拒绝。生产适配器扩展属于 Stage 2B。deterministic embedding 仅限显式 test/core/demo 且非 production，未配置 provider 时发布/搜索返回 503。
+
+红灯日志：`build/task3-red.log`、`build/task3-chunks-red.log`、`build/task3-http-red.log`；边界红灯 `build/task3-boundary-red.log` 验证了契约长度/字符限制不一致和 pgvector 极值分数失真。`build/task3-unicode-red.log` 复现孤立 surrogate 与 Unicode 长度计数问题；现已在哈希/embedding/SQL 前拒绝非法 Unicode，长度统一按 OpenAPI 的 code point 语义计算。`build/task3-diff-red.log` 通过真实并发编辑复现自 diff 不一致，并验证 404/409 契约语义。
+
+最终验收（Java 21）：
+
+```powershell
+.\mvnw.cmd -B -ntp '-Dtest=*Test,*Tests,*IT' '-Dsurefire.failIfNoSpecifiedTests=false' verify
+.\mvnw.cmd -B -ntp -pl apps/ops-api '-Dtest=*Test,*Tests,*IT' verify
+npm --prefix web/ops-console run api:check
+npm --prefix web/ops-console run build
+```
+
+`build/task3-final-all.log` 的三应用完整回归 305 项通过。随后修正 diff 和未知服务响应后，`build/task3-final-api.log` 对最终 API 重新执行全部单元/模块/集成测试，268 项通过；结合未变动 Executor 29 项、Demo 10 项，最终覆盖共 307 项，均无失败或跳过。Task 3 专项 50 项包含在上述数字中，不重复计数。全部数据库测试使用真实 PostgreSQL 17 + pgvector，通知测试使用真实 Valkey。
+
+OpenAPI 最终生成与 `api:check` 日志为 `build/task3-final-api-types.log`，前端生产构建为 `build/task3-web-build.log`，均通过。Vite 的沙箱子进程 EPERM 在正常权限下重跑解决，未修改依赖版本。本任务未修改前端页面、未重跑完整浏览器 E2E、未接入真实模型 provider，也未部署或推送远程。
+
 ## 下一实施任务
 
-下一项为 Task 3：版本化 Runbook 的已发布知识检索。随后按计划依次推进模型、Eval、治理界面、身份审计及 Stage 2A 总体验收。
+下一项为 Task 4：真实模型接入与有界诊断编排。随后按计划依次推进 Eval、治理界面、身份审计及 Stage 2A 总体验收。
 
 当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入在 Task 4 / 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。

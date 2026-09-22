@@ -176,6 +176,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runbooks/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search published Runbook knowledge
+         * @description Searches only published, service-scoped Runbook chunks. The server owns the embedding input and enforces the result and candidate limits.
+         */
+        get: operations["searchRunbooks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbooks/{key}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: components["parameters"]["RunbookKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List Runbook versions
+         * @description Lists versions for a Runbook. Draft and administrative views are restricted to Runbook administrators and the service scope.
+         */
+        get: operations["listRunbookVersions"];
+        put?: never;
+        /**
+         * Create a Runbook draft
+         * @description Creates the stable Runbook identity when the key is absent, or verifies that the supplied service and owner metadata match the existing identity.
+         */
+        post: operations["createRunbookDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbook-versions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        /** Get a Runbook version */
+        get: operations["getRunbookVersion"];
+        /** Update a Runbook draft */
+        put: operations["updateRunbookDraft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbook-versions/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Compare two Runbook versions
+         * @description Both versions use one database snapshot. Versions belonging to different Runbooks return 409.
+         */
+        get: operations["diffRunbookVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbook-versions/{id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review a Runbook draft
+         * @description A review is recorded for the authenticated administrator; no request body is accepted.
+         */
+        post: operations["reviewRunbookVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbook-versions/{id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish a reviewed Runbook version
+         * @description Publishing freezes the definition and its indexed knowledge chunks.
+         */
+        post: operations["publishRunbookVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/alertmanager/webhook": {
         parameters: {
             query?: never;
@@ -236,6 +368,115 @@ export interface components {
             | "ESCALATED";
         /** @enum {string} */
         ApprovalDecision: "approve" | "reject";
+        DraftInput: {
+            /** Format: uuid */
+            serviceId: string;
+            displayName: string;
+            ownerTeam: string;
+            definition: components["schemas"]["RunbookDefinition"];
+            markdown: string;
+        };
+        DraftContent: {
+            definition: components["schemas"]["RunbookDefinition"];
+            markdown: string;
+        };
+        /** @description The only definition shape currently supported by the executor. The server must also verify that runbookKey matches the URL and stable Runbook identity before accepting it. */
+        RunbookDefinition: {
+            runbookKey: string;
+            /** @enum {string} */
+            risk: "R1";
+            /** @enum {string} */
+            adapterId: "demo-http";
+            parameters: components["schemas"]["RunbookParameterSchema"];
+            steps: components["schemas"]["RunbookStep"][];
+            verification: components["schemas"]["RunbookVerification"];
+            rollback: null;
+        };
+        RunbookParameterSchema: {
+            /** @enum {string} */
+            type: "object";
+            properties: {
+                replicas: {
+                    /** @enum {string} */
+                    type: "integer";
+                    minimum: number;
+                    maximum: number;
+                };
+            };
+            required: "replicas"[];
+            /** @enum {boolean} */
+            additionalProperties: false;
+        };
+        RunbookStep: {
+            /** @enum {string} */
+            stepId: "recover-one";
+            /** @enum {string} */
+            operation: "recover_connection_pool";
+        };
+        RunbookVerification: {
+            /** @enum {string} */
+            probe: "demo_checkout_health";
+            successThreshold: number;
+            attempts: number;
+            intervalSeconds: number;
+        };
+        VersionView: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            runbookId: string;
+            runbookKey: string;
+            /** Format: uuid */
+            serviceId: string;
+            /** Format: int32 */
+            versionNumber: number;
+            /** @enum {string} */
+            lifecycle: "draft" | "published" | "retired";
+            /** Format: int64 */
+            revision: number;
+            definition: components["schemas"]["RunbookDefinition"];
+            markdown: string;
+            definitionChecksum: string;
+            /** Format: uuid */
+            authorPrincipalId: string | null;
+            /** Format: uuid */
+            reviewerPrincipalId: string | null;
+            /** Format: date-time */
+            publishedAt: string | null;
+        };
+        VersionDiff: {
+            /** Format: uuid */
+            fromVersionId: string;
+            /** Format: uuid */
+            toVersionId: string;
+            definitionChanged: boolean;
+            markdownChanged: boolean;
+            beforeDefinition: components["schemas"]["RunbookDefinition"];
+            afterDefinition: components["schemas"]["RunbookDefinition"];
+            beforeMarkdown: string;
+            afterMarkdown: string;
+        };
+        KnowledgeHit: {
+            /** @enum {string} */
+            source: "runbook";
+            runbookKey: string;
+            /** Format: uuid */
+            runbookVersionId: string;
+            /** Format: int32 */
+            versionNumber: number;
+            /** Format: uuid */
+            chunkId: string;
+            /** Format: int32 */
+            chunkNo: number;
+            content: string;
+            /** Format: int64 */
+            lexicalRank: number | null;
+            /** Format: int64 */
+            vectorRank: number | null;
+            lexicalScore: number | null;
+            vectorScore: number | null;
+            fusedScore: number;
+        };
         ProblemDetail: {
             /** Format: uri */
             type: string;
@@ -536,8 +777,17 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetail"];
             };
         };
-        /** @description The incident changed after the caller read it. */
+        /** @description The resource changed after the caller read it. */
         PreconditionFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetail"];
+            };
+        };
+        /** @description A required provider or dependency is temporarily unavailable. */
+        DependencyUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -548,16 +798,18 @@ export interface components {
     };
     parameters: {
         IncidentId: string;
+        RunbookKey: string;
+        RunbookVersionId: string;
         /** @description Opaque cursor returned by the preceding page. */
         Cursor: string;
         PageSize: number;
-        /** @description Quoted incident resource version from the most recent ETag. */
+        /** @description Quoted resource revision from the most recent ETag. */
         IfMatch: string;
         IdempotencyKey: string;
     };
     requestBodies: never;
     headers: {
-        /** @description Quoted incident resource version for subsequent If-Match commands. */
+        /** @description Quoted resource revision for subsequent If-Match commands. */
         ETag: string;
     };
     pathItems: never;
@@ -679,7 +931,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Quoted incident resource version from the most recent ETag. */
+                /** @description Quoted resource revision from the most recent ETag. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -710,7 +962,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Quoted incident resource version from the most recent ETag. */
+                /** @description Quoted resource revision from the most recent ETag. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -746,7 +998,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Quoted incident resource version from the most recent ETag. */
+                /** @description Quoted resource revision from the most recent ETag. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -782,7 +1034,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Quoted incident resource version from the most recent ETag. */
+                /** @description Quoted resource revision from the most recent ETag. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -818,7 +1070,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Quoted incident resource version from the most recent ETag. */
+                /** @description Quoted resource revision from the most recent ETag. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -850,6 +1102,258 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
+        };
+    };
+    searchRunbooks: {
+        parameters: {
+            query: {
+                serviceId: string;
+                query: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published, service-scoped knowledge hits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeHit"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["DependencyUnavailable"];
+        };
+    };
+    listRunbookVersions: {
+        parameters: {
+            query?: {
+                afterVersion?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                key: components["parameters"]["RunbookKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runbook versions ordered by version number. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createRunbookDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["RunbookKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftInput"];
+            };
+        };
+        responses: {
+            /** @description Runbook draft created. */
+            201: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRunbookVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runbook version. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateRunbookDraft: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Quoted resource revision from the most recent ETag. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftContent"];
+            };
+        };
+        responses: {
+            /** @description Updated Runbook draft. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+        };
+    };
+    diffRunbookVersions: {
+        parameters: {
+            query: {
+                otherVersionId: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Structural Runbook version diff. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionDiff"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    reviewRunbookVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Quoted resource revision from the most recent ETag. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reviewed Runbook draft. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+        };
+    };
+    publishRunbookVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Quoted resource revision from the most recent ETag. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["RunbookVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable published Runbook version. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            503: components["responses"]["DependencyUnavailable"];
         };
     };
     receiveAlertmanagerWebhook: {
