@@ -1,6 +1,7 @@
 package io.sentinelops.api.incident.adapter.in.web;
 
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.sql.ResultSet;
@@ -88,6 +89,7 @@ public class EvidenceQueryController {
     }
 
     private void authorize(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.READ_EVIDENCE, serviceId);
         if (!principal.canAccess(serviceId)
                 || !principal.hasAnyRole(
                         PlatformRole.OBSERVER,

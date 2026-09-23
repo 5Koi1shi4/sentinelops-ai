@@ -17,6 +17,8 @@ import org.springframework.security.oauth2.jwt.JwtClaimNames;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
+import io.sentinelops.api.identity.application.PrincipalSynchronizer;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration(proxyBeanMethods = false)
@@ -26,6 +28,7 @@ public class SecurityConfig {
     SecurityFilterChain apiSecurity(
             HttpSecurity http,
             SentinelJwtAuthenticationConverter jwtConverter,
+            PrincipalSynchronizer principalSynchronizer,
             Environment environment)
             throws Exception {
         http.csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"));
@@ -51,6 +54,8 @@ public class SecurityConfig {
                     .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/runbook-versions/*/diff")
                     .hasAnyRole("RUNBOOK_ADMIN", "PLATFORM_ADMIN");
+            authorize.requestMatchers(HttpMethod.GET, "/api/v1/audit-records")
+                    .hasAnyRole("AUDITOR", "PLATFORM_ADMIN");
             authorize.requestMatchers(HttpMethod.GET, "/api/v1/runbook-versions/*",
                             "/api/v1/runbooks/*/versions")
                     .hasAnyRole("OBSERVER", "ON_CALL_OPERATOR", "SRE_APPROVER", "RUNBOOK_ADMIN", "PLATFORM_ADMIN");
@@ -63,6 +68,8 @@ public class SecurityConfig {
         http.oauth2ResourceServer(
                 resourceServer -> resourceServer.jwt(jwt ->
                         jwt.jwtAuthenticationConverter(jwtConverter)));
+        http.addFilterAfter(new PrincipalSynchronizationFilter(principalSynchronizer),
+                BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 

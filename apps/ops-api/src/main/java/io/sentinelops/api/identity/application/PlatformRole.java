@@ -8,7 +8,8 @@ public enum PlatformRole {
     ON_CALL_OPERATOR,
     SRE_APPROVER,
     RUNBOOK_ADMIN,
-    PLATFORM_ADMIN;
+    PLATFORM_ADMIN,
+    AUDITOR;
 
     public String authority() {
         return "ROLE_" + name();

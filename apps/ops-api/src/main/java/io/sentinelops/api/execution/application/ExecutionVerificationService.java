@@ -3,10 +3,13 @@ package io.sentinelops.api.execution.application;
 import io.sentinelops.api.execution.adapter.out.persistence.VerificationStore;
 import io.sentinelops.api.execution.adapter.out.persistence.VerificationStore.ClaimedCycle;
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.domain.IllegalIncidentTransition;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
+import io.sentinelops.api.shared.audit.AuditCommand;
+import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.id.UuidV7Generator;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
@@ -39,6 +42,7 @@ public class ExecutionVerificationService {
     private final IdempotencyService idempotency;
     private final UuidV7Generator ids;
     private final ObjectMapper objectMapper;
+    private final AuditRecorder audit;
     private final Duration maxDelay;
     private final boolean schedulerEnabled;
     private final String workerId;
@@ -49,6 +53,7 @@ public class ExecutionVerificationService {
             IdempotencyService idempotency,
             UuidV7Generator ids,
             ObjectMapper objectMapper,
+            AuditRecorder audit,
             @Value("${sentinelops.verification.max-delay:PT5S}") Duration maxDelay,
             @Value("${sentinelops.verification.scheduler-enabled:true}")
                     boolean schedulerEnabled,
@@ -58,6 +63,7 @@ public class ExecutionVerificationService {
         this.idempotency = Objects.requireNonNull(idempotency, "idempotency");
         this.ids = Objects.requireNonNull(ids, "ids");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        this.audit = Objects.requireNonNull(audit, "audit");
         this.maxDelay = Objects.requireNonNull(maxDelay, "maxDelay");
         if (maxDelay.isNegative()) {
             throw new IllegalArgumentException("verification maxDelay must not be negative");
@@ -103,6 +109,8 @@ public class ExecutionVerificationService {
                 HttpStatus.NOT_FOUND,
                 "incident_not_found",
                 "The incident does not exist."));
+        AuthorizationService.require(principal, AuthorizationService.Action.MANUAL_VERIFY,
+                context.serviceId());
         if (!principal.hasAnyRole(
                         PlatformRole.ON_CALL_OPERATOR, PlatformRole.PLATFORM_ADMIN)
                 || !principal.canAccess(context.serviceId())) {
@@ -138,10 +146,6 @@ public class ExecutionVerificationService {
         var payload = objectMapper.createObjectNode()
                 .put("reason", reason)
                 .put("requestedBy", principal.subject());
-        var auditMetadata = payload.deepCopy()
-                .put("fromStatus", context.status().databaseValue())
-                .put("fromVersion", context.version())
-                .put("toVersion", transition.version());
         store.appendEvent(
                 ids.generate(),
                 incidentId,
@@ -151,13 +155,10 @@ public class ExecutionVerificationService {
                 principal.subject(),
                 objectMapper.writeValueAsString(payload),
                 now);
-        store.appendManualVerificationAudit(
-                ids.generate(),
-                context.serviceId(),
-                principal.subject(),
-                incidentId,
-                objectMapper.writeValueAsString(auditMetadata),
-                now);
+        audit.record(new AuditCommand(context.serviceId(), "user", principal.subject(),
+                "incident.manual_verification_requested", "incident", incidentId.toString(),
+                "success", null, null, null,
+                Map.of("status", "verifying", "revision", transition.version())));
         var view = new ManualVerificationView(
                 incidentId, "verifying", transition.version());
         return new IdempotencyService.Response(

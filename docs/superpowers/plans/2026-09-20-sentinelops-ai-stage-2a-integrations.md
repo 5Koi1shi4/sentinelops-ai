@@ -27,7 +27,7 @@
 
 - Stage 1 已在 `cb2fb0b` 完成并标记 `v0.1.0-demo`，验收证据见 `docs/runbooks/stage-1-verification.md`。继续使用现有 `feat/stage-1-demo` worktree。
 - 与已提交代码保持一致，事故和诊断运行 ID 使用 `UUID`；本阶段不另建重复 ID 类型。
-- Stage 1 已占用 Flyway V1–V11。本阶段证据约束使用 V12，知识检索使用 V13，诊断领取使用 V14，Eval 使用 V15；Stage 2B 从 V16 开始，禁止修改既有迁移。新增迁移改变此顺序时，在编码前同步后续文件名。
+- Stage 1 已占用 Flyway V1–V11。本阶段证据约束使用 V12，知识检索使用 V13，诊断领取使用 V14，Eval 使用 V15，身份与审计使用 V16；Stage 2B 从 V17 开始，禁止修改既有迁移。新增迁移改变此顺序时，在编码前同步后续文件名。
 - 适配器产出的 `CapturedEvidence` 仍是不可信内存数据。Task 1 的 hash 只用于规范化一致性检查；Task 2 必须对脱敏后的规范 JSON 重新计算持久化 hash，原始内容及原始 hash 不进入数据库、工具结果或遥测。
 - 证据查询与模型调用必须在数据库事务外运行。Task 2 使用短事务校验事故/运行归属并冻结结果；Task 4 把诊断拆为领取、外部调用、条件提交三段，重复请求和过期结果不得创建第二份提案。
 - `*IT` 测试当前由显式 Surefire `-Dtest=... test` 命令运行；不要仅凭默认 `verify` 声称集成验收通过。阶段验收继续分别运行单元测试和真实依赖测试。
@@ -824,6 +824,7 @@ git commit -m "feat: add Runbook and AI governance UI"
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/application/AuditService.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/adapter/out/persistence/AuditStore.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/audit/adapter/in/web/AuditController.java`
+- Create: `apps/ops-api/src/main/resources/db/migration/V16__identity_audit.sql`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/identity/PrincipalSynchronizationIT.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/identity/ServiceScopeAuthorizationIT.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/audit/AuditPrivacyIT.java`
@@ -835,11 +836,11 @@ git commit -m "feat: add Runbook and AI governance UI"
 - Produces: append-only `AuditService.record(AuditCommand)` and keyset `GET /api/v1/audit-records` for authorized auditors/admins.
 - Consumes: validated JWT claims; never trusts role/service IDs from request JSON.
 
-- [ ] **Step 1: Write failing synchronization/scope/privacy tests**
+- [x] **Step 1: Write failing synchronization/scope/privacy tests**
 
-Test issuer+subject upsert, removal of a service claim, Platform Admin global access, ordinary role denial outside service scope, and audit serialization. Include secret-shaped prompt/evidence fixtures and assert none appear in `audit_record.metadata` or test logs.
+Test issuer+subject upsert, removal of a service claim, Platform Admin global access, ordinary role denial outside service scope, and audit serialization. Include secret-shaped prompt/evidence fixtures and assert none appear in `audit_record.metadata` or test logs. A stale token must not restore a removed grant. V16 adds a dedicated audit result, an audit cursor index, an auditor role, and the claim issue time used for grant reconciliation.
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 Run:
 
@@ -849,15 +850,15 @@ Run:
 
 Expected: FAIL because persistence-backed identity and audit services are absent.
 
-- [ ] **Step 3: Implement least-authority synchronization and domain authorization**
+- [x] **Step 3: Implement least-authority synchronization and domain authorization**
 
 On authenticated requests, upsert display metadata and reconcile only grants asserted by trusted issuer configuration. Unknown roles are ignored and metric-counted. Do not auto-create Platform Admin from a free-form claim. Application services call `AuthorizationService` before loading sensitive evidence and immediately before state mutation.
 
-- [ ] **Step 4: Implement explicit audit commands**
+- [x] **Step 4: Implement explicit audit commands**
 
 Audit request/decision/publish/execute/config events with actor, action, resource type/ID, result, before/after hashes, trace ID and sanitized metadata. Do not use a blanket AOP serializer over method arguments. Database role denies UPDATE/DELETE on audit records in production grants.
 
-- [ ] **Step 5: Verify authorization matrix and privacy**
+- [x] **Step 5: Verify authorization matrix and privacy**
 
 Run:
 
@@ -867,7 +868,7 @@ Run:
 
 Expected: PASS; changing UI/client claims cannot widen service access, and audit content contains no prompt/evidence body.
 
-- [ ] **Step 6: Commit identity and audit completion**
+- [x] **Step 6: Commit identity and audit completion**
 
 ```powershell
 git add apps/ops-api deploy/keycloak

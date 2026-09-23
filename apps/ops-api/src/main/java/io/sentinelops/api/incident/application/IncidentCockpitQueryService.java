@@ -1,6 +1,7 @@
 package io.sentinelops.api.incident.application;
 
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.application.IncidentCockpitView.ApprovalView;
 import io.sentinelops.api.incident.application.IncidentCockpitView.DiagnosisView;
@@ -221,6 +222,7 @@ public class IncidentCockpitQueryService {
     }
 
     private void authorize(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.VIEW_INCIDENT, serviceId);
         if (!principal.canAccess(serviceId)
                 || !principal.hasAnyRole(
                         PlatformRole.OBSERVER,

@@ -1,11 +1,14 @@
 package io.sentinelops.api.knowledge.application;
 
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.identity.application.PrincipalLookup;
 import io.sentinelops.api.knowledge.adapter.out.persistence.KnowledgeStore;
 import io.sentinelops.api.knowledge.adapter.out.persistence.KnowledgeStore.Row;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
+import io.sentinelops.api.shared.audit.AuditCommand;
+import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -36,12 +39,15 @@ public class RunbookApplicationService {
     private final PrincipalLookup principals;
     private final IdempotencyService idempotency;
     private final ObjectMapper json;
+    private final AuditRecorder audit;
 
     public RunbookApplicationService(KnowledgeStore store, RunbookDefinitionValidator validator,
             KnowledgeChunker chunker, ObjectProvider<EmbeddingGateway> providers, KnowledgeSearch search,
-            PrincipalLookup principals, IdempotencyService idempotency, ObjectMapper json) {
+            PrincipalLookup principals, IdempotencyService idempotency, ObjectMapper json,
+            AuditRecorder audit) {
         this.store = store; this.validator = validator; this.chunker = chunker; this.providers = providers;
         this.search = search; this.principals = principals; this.idempotency = idempotency; this.json = json;
+        this.audit = audit;
     }
 
     public VersionView createDraft(String key, DraftInput input, String commandKey, CurrentPrincipal principal) {
@@ -60,7 +66,7 @@ public class RunbookApplicationService {
             }
             var actor = principals.upsert(principal, principal.subject());
             var created = store.insertDraft(runbook.id(), actor, input.definition(), hash(input.definition()), input.markdown());
-            store.audit(created, principal.subject(), "runbook_draft_created", null);
+            audit(created, principal, "runbook_draft_created", null);
             return created;
         }, 201);
     }
@@ -74,7 +80,7 @@ public class RunbookApplicationService {
             var current = lockDraft(id, revision, principal);
             var actor = principals.upsert(principal, principal.subject());
             var edited = store.updateDraft(id, actor, input.definition(), hash(input.definition()), input.markdown());
-            store.audit(edited, principal.subject(), "runbook_draft_updated", current.checksum());
+            audit(edited, principal, "runbook_draft_updated", current.checksum());
             return edited;
         }, 200);
     }
@@ -89,7 +95,7 @@ public class RunbookApplicationService {
                 throw conflict("independent_review_required", "The author and editors cannot approve their own Runbook content.");
             }
             var reviewed = store.review(id, actor);
-            store.audit(reviewed, principal.subject(), "runbook_reviewed", current.checksum());
+            audit(reviewed, principal, "runbook_reviewed", current.checksum());
             return reviewed;
         }, 200);
     }
@@ -120,7 +126,7 @@ public class RunbookApplicationService {
             }
             store.insertChunks(current, ready.chunks(), ready.vectors(), ready.model());
             var published = store.publish(id);
-            store.audit(published, principal.subject(), "runbook_published", current.checksum());
+            audit(published, principal, "runbook_published", current.checksum());
             return published;
         }, 200);
     }
@@ -225,13 +231,23 @@ public class RunbookApplicationService {
     }
     private static void authorize(CurrentPrincipal principal, UUID service, boolean admin) {
         Objects.requireNonNull(principal, "principal"); Objects.requireNonNull(service, "service");
+        AuthorizationService.require(principal,
+                admin ? AuthorizationService.Action.MANAGE_RUNBOOK : AuthorizationService.Action.VIEW_RUNBOOK,
+                service);
         boolean role = admin ? principal.hasAnyRole(PlatformRole.RUNBOOK_ADMIN, PlatformRole.PLATFORM_ADMIN)
                 : principal.hasAnyRole(PlatformRole.values());
         if (!role || !principal.canAccess(service)) throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied", "The principal cannot access this Runbook service.");
     }
+    private void audit(Row row, CurrentPrincipal principal, String action, String beforeChecksum) {
+        audit.record(new AuditCommand(row.serviceId(), "user", principal.subject(), action,
+                "runbook_version", row.id().toString(), "success", beforeChecksum,
+                row.checksum(), null,
+                Map.of("revision", row.revision(), "versionNumber", row.versionNumber())));
+    }
     private static void authorizeDirectory(CurrentPrincipal principal) {
         Objects.requireNonNull(principal, "principal");
-        if (!principal.hasAnyRole(PlatformRole.values())) {
+        if (!principal.hasAnyRole(PlatformRole.OBSERVER, PlatformRole.ON_CALL_OPERATOR,
+                PlatformRole.SRE_APPROVER, PlatformRole.RUNBOOK_ADMIN, PlatformRole.PLATFORM_ADMIN)) {
             throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied", "The principal cannot access the Runbook catalog.");
         }
     }

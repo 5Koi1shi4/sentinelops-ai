@@ -28,7 +28,8 @@ public class PrincipalLookup {
                         insert into principal(id, issuer, subject, display_name, created_at)
                         values (:id, :issuer, :subject, :displayName, clock_timestamp())
                         on conflict (issuer, subject) do update
-                        set display_name = excluded.display_name
+                        set display_name = case when principal.claims_issued_at is null
+                            then excluded.display_name else principal.display_name end
                         returning id
                         """)
                 .param("id", ids.generate())

@@ -1,6 +1,7 @@
 package io.sentinelops.api.incident.application;
 
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.adapter.out.persistence.IncidentStore;
 import io.sentinelops.api.incident.domain.IncidentStatus;
@@ -187,6 +188,7 @@ public class IncidentApplicationService {
     }
 
     private void authorizeViewer(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.VIEW_INCIDENT, serviceId);
         authorizeViewerRole(principal);
         if (!principal.canAccess(serviceId)) {
             throw new ApiProblemException(

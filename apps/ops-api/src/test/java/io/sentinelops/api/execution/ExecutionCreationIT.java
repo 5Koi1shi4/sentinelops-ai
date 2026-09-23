@@ -41,6 +41,7 @@ class ExecutionCreationIT extends ExecutionFixtureSupport {
         assertThat(json.has("target")).isFalse();
         assertThat(incidentStatus(fixture.incidentId())).isEqualTo("executing");
         assertThat(created.incidentVersion()).isEqualTo(4);
+        assertThat(auditCount(created.id())).isOne();
     }
 
     @Test
@@ -55,6 +56,7 @@ class ExecutionCreationIT extends ExecutionFixtureSupport {
 
         assertThat(replay).isEqualTo(first);
         assertThat(executionCount(first.id())).isOne();
+        assertThat(auditCount(first.id())).isOne();
         assertThat(jdbc.sql("select count(*) from outbox_event where aggregate_id = :id")
                         .param("id", first.id())
                         .query(Integer.class)
@@ -148,6 +150,13 @@ class ExecutionCreationIT extends ExecutionFixtureSupport {
                 .param("id", executionId)
                 .query(Integer.class)
                 .single();
+    }
+
+    private int auditCount(UUID executionId) {
+        return jdbc.sql("""
+                select count(*) from audit_record
+                where resource_type='execution' and resource_id=:id and action='execution_requested'
+                """).param("id", executionId.toString()).query(Integer.class).single();
     }
 
     private String incidentStatus(UUID incidentId) {

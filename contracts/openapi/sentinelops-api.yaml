@@ -18,6 +18,7 @@ tags:
   - name: Integrations
   - name: Runbooks
   - name: Evaluations
+  - name: Audits
 
 paths:
   /services:
@@ -787,6 +788,48 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /audit-records:
+    get:
+      operationId: listAuditRecords
+      tags: [Audits]
+      summary: Read append-only audit records
+      description: >-
+        PLATFORM_ADMIN may read across services. AUDITOR must provide an assigned
+        serviceId. Results use a stable occurredAt/id keyset cursor and contain
+        only structured, allowlisted metadata.
+      x-required-roles: [AUDITOR, PLATFORM_ADMIN]
+      parameters:
+        - name: serviceId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          schema:
+            type: string
+            maxLength: 160
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: A service-scoped or administrator audit page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /eval-runs:
     get:
       operationId: listEvalRunSummaries
@@ -1026,6 +1069,59 @@ components:
             $ref: "#/components/schemas/ProblemDetail"
 
   schemas:
+    AuditPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AuditRecord"
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 160
+    AuditRecord:
+      type: object
+      required: [id, serviceId, actorType, actorId, action, resourceType,
+        resourceId, result, beforeHash, afterHash, metadata, traceId, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        serviceId:
+          type: [string, 'null']
+          format: uuid
+        actorType:
+          type: string
+          enum: [user, service, system, model]
+        actorId:
+          type: string
+          maxLength: 256
+        action:
+          type: string
+          maxLength: 100
+        resourceType:
+          type: string
+          maxLength: 80
+        resourceId:
+          type: string
+          maxLength: 256
+        result:
+          type: string
+          enum: [success, failure, denied, unknown]
+        beforeHash:
+          type: [string, 'null']
+        afterHash:
+          type: [string, 'null']
+        metadata:
+          type: object
+          additionalProperties: true
+        traceId:
+          type: [string, 'null']
+        occurredAt:
+          type: string
+          format: date-time
     ServiceSummary:
       type: object
       additionalProperties: false

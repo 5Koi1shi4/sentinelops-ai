@@ -273,6 +273,7 @@ class ApprovalConcurrencyIT extends PostgresIntegrationTest {
         assertThat(replayedRequest).isEqualTo(firstRequest);
         assertThat(requestCount(fixture.proposalId())).isOne();
         assertThat(eventCount(fixture.incidentId(), "approval_requested")).isOne();
+        assertThat(auditCount(firstRequest.id(), "approval_requested")).isOne();
 
         var approver = context("replay-approver-" + firstRequest.id(), fixture.serviceId());
         var command = new DecisionCommand(APPROVE, "approved once", fixture.proposalHash());
@@ -293,6 +294,20 @@ class ApprovalConcurrencyIT extends PostgresIntegrationTest {
         assertThat(replayedDecision).isEqualTo(firstDecision);
         assertThat(decisionCount(firstRequest.id())).isOne();
         assertThat(eventCount(fixture.incidentId(), "approval_granted")).isOne();
+        assertThat(auditCount(firstRequest.id(), "approval_decided")).isOne();
+        assertThat(jdbc.sql("""
+                select metadata::text from audit_record
+                where resource_type='approval_request' and resource_id=:id and action='approval_decided'
+                """).param("id", firstRequest.id().toString()).query(String.class).single())
+                .doesNotContain("approved once");
+    }
+
+    private int auditCount(UUID resourceId, String action) {
+        return jdbc.sql("""
+                select count(*) from audit_record
+                where resource_type='approval_request' and resource_id=:id and action=:action
+                """).param("id", resourceId.toString()).param("action", action)
+                .query(Integer.class).single();
     }
 
     private Fixture fixture(RiskLevel risk) {

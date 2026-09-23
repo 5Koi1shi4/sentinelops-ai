@@ -9,12 +9,15 @@ import io.sentinelops.api.execution.application.ExecutionTicketVerifier.Verified
 import io.sentinelops.api.execution.domain.Execution;
 import io.sentinelops.api.execution.domain.ExecutionStatus;
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.audit.AuditCommand;
+import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +53,7 @@ public class ExecutionApplicationService {
     private final IdempotencyService idempotency;
     private final UuidV7Generator ids;
     private final ObjectMapper objectMapper;
+    private final AuditRecorder audit;
     private final String ticketIssuer;
     private final String ticketAudience;
 
@@ -62,6 +66,7 @@ public class ExecutionApplicationService {
             IdempotencyService idempotency,
             UuidV7Generator ids,
             ObjectMapper objectMapper,
+            AuditRecorder audit,
             @Value("${sentinelops.execution-ticket.issuer}") String ticketIssuer,
             @Value("${sentinelops.execution-ticket.audience}") String ticketAudience) {
         this.store = store;
@@ -72,6 +77,7 @@ public class ExecutionApplicationService {
         this.idempotency = idempotency;
         this.ids = ids;
         this.objectMapper = objectMapper;
+        this.audit = audit;
         this.ticketIssuer = requireText(ticketIssuer, "ticketIssuer");
         this.ticketAudience = requireText(ticketAudience, "ticketAudience");
     }
@@ -541,6 +547,10 @@ public class ExecutionApplicationService {
                 "execution.requested.v1",
                 objectMapper.writeValueAsString(outboxPayload),
                 databaseNow);
+        audit.record(new AuditCommand(context.serviceId(), "user", principal.subject(),
+                "execution_requested", "execution", executionId.toString(), "success",
+                context.proposalHash(), context.runbookChecksum(), null,
+                Map.of("status", "pending", "riskLevel", context.risk().name().toLowerCase(java.util.Locale.ROOT))));
         return response(
                 HttpStatus.CREATED,
                 new Execution(
@@ -659,6 +669,7 @@ public class ExecutionApplicationService {
     }
 
     private void authorizeOperator(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.EXECUTE, serviceId);
         if (!principal.hasAnyRole(
                         PlatformRole.ON_CALL_OPERATOR, PlatformRole.PLATFORM_ADMIN)
                 || !principal.canAccess(serviceId)) {

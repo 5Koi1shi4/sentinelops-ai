@@ -11,6 +11,7 @@ import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.knowledge.application.RunbookCatalog;
 import io.sentinelops.api.shared.id.UuidV7Generator;
@@ -289,6 +290,7 @@ public class DiagnosisApplicationService {
     }
 
     private void authorize(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.DIAGNOSE, serviceId);
         if (!principal.hasAnyRole(
                         PlatformRole.ON_CALL_OPERATOR, PlatformRole.PLATFORM_ADMIN)
                 || !principal.canAccess(serviceId)) {

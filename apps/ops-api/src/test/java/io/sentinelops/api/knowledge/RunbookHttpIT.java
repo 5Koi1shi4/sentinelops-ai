@@ -96,7 +96,6 @@ class RunbookHttpIT extends PostgresIntegrationTest {
                 .header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content(governanceBody.toString()))
                 .andExpect(status().isCreated()).andReturn();
         String draftId = json.readTree(created.getResponse().getContentAsString()).path("id").asString();
-        long principalsBeforeRead = jdbc.sql("select count(*) from principal").query(Long.class).single();
         assertThat(jdbc.sql("select count(*) from principal where subject=:subject")
                 .param("subject", newReviewer).query(Long.class).single()).isZero();
 
@@ -107,7 +106,8 @@ class RunbookHttpIT extends PostgresIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.canReview").value(true));
         mvc.perform(get("/api/v1/runbook-versions/{id}", draftId).with(actor("observer", "OBSERVER", true)))
                 .andExpect(status().isForbidden());
-        assertThat(jdbc.sql("select count(*) from principal").query(Long.class).single()).isEqualTo(principalsBeforeRead);
+        assertThat(jdbc.sql("select count(*) from principal where subject=:subject")
+                .param("subject", newReviewer).query(Long.class).single()).isEqualTo(1L);
 
         mvc.perform(post("/api/v1/runbook-versions/{id}/review", draftId).with(actor(newReviewer, "RUNBOOK_ADMIN", true))
                 .header("Idempotency-Key", UUID.randomUUID()).header("If-Match", "\"0\""))

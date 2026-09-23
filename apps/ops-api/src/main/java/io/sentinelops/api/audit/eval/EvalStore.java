@@ -170,13 +170,6 @@ class EvalStore {
                 where id=:id and state='started'
                 """).param("id",command).param("body",mapper.writeValueAsString(Map.of("id",run))).update();
     }
-    void audit(UUID run,String actor,String action,JsonNode metadata) {
-        jdbc.sql("""
-                insert into audit_record(id,actor_type,actor_id,action,resource_type,resource_id,metadata,occurred_at)
-                values(:id,'user',:actor,:action,'eval_run',:run,cast(:metadata as jsonb),clock_timestamp())
-                """).param("id",ids.generate()).param("actor",actor).param("action",action).param("run",run.toString())
-                .param("metadata",mapper.writeValueAsString(metadata)).update();
-    }
     static ApiProblemException problem(HttpStatus status,String code) { return new ApiProblemException(status,code,"Eval request could not be completed."); }
     record CaseRow(UUID id,EvalCase item) {}
     record RunRow(UUID id,UUID datasetId,UUID baselineId,UUID commandId,String status,String provider,String modelName,

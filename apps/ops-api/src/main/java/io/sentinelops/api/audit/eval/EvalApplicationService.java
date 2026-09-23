@@ -6,6 +6,8 @@ import io.sentinelops.api.diagnosis.application.model.*;
 import io.sentinelops.api.diagnosis.application.tool.ToolContext;
 import io.sentinelops.api.diagnosis.domain.DiagnosisProposalDraft;
 import io.sentinelops.api.identity.application.*;
+import io.sentinelops.api.shared.audit.AuditCommand;
+import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.id.UuidV7Generator;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.math.BigDecimal;
@@ -32,6 +34,7 @@ public class EvalApplicationService {
     private final PrincipalLookup principals;
     private final UuidV7Generator ids;
     private final ObjectMapper mapper;
+    private final AuditRecorder audit;
     private final TransactionTemplate tx;
     private final RuleBasedEvaluator evaluator = new RuleBasedEvaluator();
     private final EvalThresholdPolicy thresholds = new EvalThresholdPolicy();
@@ -40,9 +43,10 @@ public class EvalApplicationService {
 
     public EvalApplicationService(EvalStore store,EvalDatasetImporter importer,ModelGatewayFactory models,
             DiagnosisPolicy diagnosisPolicy,ProposalHasher proposalHasher,PrincipalLookup principals,
-            UuidV7Generator ids,ObjectMapper mapper,PlatformTransactionManager transactions,Environment environment) {
+            UuidV7Generator ids,ObjectMapper mapper,AuditRecorder audit,
+            PlatformTransactionManager transactions,Environment environment) {
         this.store=store;this.importer=importer;this.models=models;this.diagnosisPolicy=diagnosisPolicy;
-        this.proposalHasher=proposalHasher;this.principals=principals;this.ids=ids;this.mapper=mapper;
+        this.proposalHasher=proposalHasher;this.principals=principals;this.ids=ids;this.mapper=mapper;this.audit=audit;
         this.tx=new TransactionTemplate(transactions);this.tx.setTimeout(10);
         this.inputPrice=price(environment,"input-micros-per-million-tokens");
         this.outputPrice=price(environment,"output-micros-per-million-tokens");
@@ -88,14 +92,18 @@ public class EvalApplicationService {
                     boolean allowed=complete && noErrors && decision.releaseAllowed();
                     if(!store.complete(claim.id(),claim.owner(),aggregate,allowed)) throw EvalStore.problem(HttpStatus.CONFLICT,"EVAL_LEASE_EXPIRED");
                     store.completeCommand(claim.command(),claim.id());
-                    store.audit(claim.id(),principal.principalKey(),"eval_completed",mapper.createObjectNode().put("releaseAllowed",allowed));
+                    audit.record(new AuditCommand(null,"user",principal.subject(),"eval_completed",
+                            "eval_run",claim.id().toString(),"success",null,null,null,
+                            Map.of("releaseAllowed",allowed)));
                 });
             } catch(RuntimeException failure) {
                 tx.executeWithoutResult(status->{
                     store.lockCommand(claim.command());
                     store.fail(claim.id(),claim.owner());
                     store.completeCommand(claim.command(),claim.id());
-                    store.audit(claim.id(),principal.principalKey(),"eval_failed",mapper.createObjectNode().put("failureCode","EVAL_RUN_FAILED"));
+                    audit.record(new AuditCommand(null,"user",principal.subject(),"eval_failed",
+                            "eval_run",claim.id().toString(),"failure",null,null,null,
+                            Map.of("failureCode","EVAL_RUN_FAILED")));
                 });
             }
             return view(store.get(claim.id()));
@@ -143,7 +151,8 @@ public class EvalApplicationService {
         }
         UUID owner=ids.generate();
         UUID id=store.start(command,datasetId,request.baselineRunId(),owner,config,config.path("runbookCorpusHash").asString());
-        store.audit(id,principal.principalKey(),"eval_started",mapper.createObjectNode().put("datasetChecksum",dataset.checksum()));
+        audit.record(new AuditCommand(null,"user",principal.subject(),"eval_started",
+                "eval_run",id.toString(),"success",null,dataset.checksum(),null,Map.of()));
         return new Claim(id,datasetId,command,owner,true);
     }
 

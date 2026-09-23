@@ -150,17 +150,6 @@ public class KnowledgeStore {
                     statement.setString(7, model); statement.setString(8, chunk.contentHash());
                 });
     }
-    public void audit(Row row, String actor, String action, String beforeChecksum) {
-        jdbc.sql("""
-                insert into audit_record(id,service_id,actor_type,actor_id,action,resource_type,resource_id,
-                    before_hash,after_hash,metadata,occurred_at)
-                values(:id,:service,'user',:actor,:action,'runbook_version',:resource,:before,:after,
-                    jsonb_build_object('revision',cast(:revision as bigint),'versionNumber',cast(:version as integer)),clock_timestamp())
-                """).param("id", ids.generate()).param("service", row.serviceId()).param("actor", actor)
-                .param("action", action).param("resource", row.id().toString()).param("before", beforeChecksum)
-                .param("after", row.checksum()).param("revision", row.revision()).param("version", row.versionNumber()).update();
-    }
-
     private Row row(ResultSet rs, int index) throws SQLException {
         return new Row(rs.getObject("id", UUID.class), rs.getObject("runbook_id", UUID.class), rs.getString("runbook_key"),
                 rs.getObject("service_id", UUID.class), rs.getString("runbook_display_name"), rs.getString("runbook_owner_team"),

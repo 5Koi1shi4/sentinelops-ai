@@ -236,32 +236,6 @@ public class VerificationStore {
                 .update();
     }
 
-    public void appendManualVerificationAudit(
-            UUID auditId,
-            UUID serviceId,
-            String actorId,
-            UUID incidentId,
-            String metadataJson,
-            Instant occurredAt) {
-        jdbc.sql("""
-                        insert into audit_record(
-                          id, service_id, actor_type, actor_id, action,
-                          resource_type, resource_id, metadata, occurred_at
-                        ) values (
-                          :id, :serviceId, 'user', :actorId,
-                          'incident.manual_verification_requested', 'incident',
-                          :resourceId, cast(:metadata as jsonb), :occurredAt
-                        )
-                        """)
-                .param("id", auditId)
-                .param("serviceId", serviceId)
-                .param("actorId", actorId)
-                .param("resourceId", incidentId.toString())
-                .param("metadata", metadataJson)
-                .param("occurredAt", timestamp(occurredAt))
-                .update();
-    }
-
     @Transactional
     public Optional<ClaimedCycle> claimNext(
             UUID claimToken, String workerId, long leaseSeconds) {

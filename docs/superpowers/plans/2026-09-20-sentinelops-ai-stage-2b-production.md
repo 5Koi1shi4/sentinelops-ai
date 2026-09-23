@@ -32,7 +32,7 @@
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/webhook/WebhookSignatureVerifier.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/webhook/WebhookReplayGuard.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/webhook/WebhookRateLimiter.java`
-- Create: `apps/ops-api/src/main/resources/db/migration/V16__webhook_replay_nonce.sql`
+- Create: `apps/ops-api/src/main/resources/db/migration/V17__webhook_replay_nonce.sql`
 - Modify: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/web/AlertmanagerWebhookController.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/incident/webhook/WebhookSecurityIT.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/incident/webhook/WebhookFuzzTest.java`
@@ -205,7 +205,7 @@ git commit -m "feat: enforce production trust boundaries"
 ## Task 3: Complete execution lease, heartbeat, fencing, and unknown-outcome semantics
 
 **Files:**
-- Create: `apps/ops-api/src/main/resources/db/migration/V17__execution_attempt_events.sql`
+- Create: `apps/ops-api/src/main/resources/db/migration/V18__execution_attempt_events.sql`
 - Modify: `apps/ops-api/src/main/java/io/sentinelops/api/execution/application/ExecutionApplicationService.java`
 - Modify: `apps/ops-api/src/main/java/io/sentinelops/api/execution/adapter/out/persistence/ExecutionStore.java`
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/execution/application/ExecutionLeasePolicy.java`

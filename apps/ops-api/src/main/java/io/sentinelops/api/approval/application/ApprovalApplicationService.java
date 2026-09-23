@@ -9,11 +9,14 @@ import io.sentinelops.api.approval.domain.ApprovalPolicy;
 import io.sentinelops.api.approval.domain.ApprovalStatus;
 import io.sentinelops.api.approval.domain.SeparationOfDutiesException;
 import io.sentinelops.api.identity.application.CurrentPrincipal;
+import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.audit.AuditCommand;
+import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.nio.charset.StandardCharsets;
@@ -41,18 +44,21 @@ public class ApprovalApplicationService {
     private final IdempotencyService idempotency;
     private final UuidV7Generator ids;
     private final ObjectMapper objectMapper;
+    private final AuditRecorder audit;
 
     public ApprovalApplicationService(
             ApprovalStore store,
             ApprovalPolicy policy,
             IdempotencyService idempotency,
             UuidV7Generator ids,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            AuditRecorder audit) {
         this.store = store;
         this.policy = policy;
         this.idempotency = idempotency;
         this.ids = ids;
         this.objectMapper = objectMapper;
+        this.audit = audit;
     }
 
     public ApprovalView request(
@@ -159,6 +165,10 @@ public class ApprovalApplicationService {
                 context.principal().subject(),
                 objectMapper.writeValueAsString(payload),
                 createdAt);
+        audit.record(new AuditCommand(proposal.serviceId(), "user", context.principal().subject(),
+                "approval_requested", "approval_request", requestId.toString(), "success",
+                null, proposal.proposalHash(), null,
+                java.util.Map.of("status", "pending")));
 
         return response(
                 HttpStatus.CREATED,
@@ -285,6 +295,11 @@ public class ApprovalApplicationService {
                     context.principal().subject(),
                     databaseNow);
         }
+        audit.record(new AuditCommand(proposal.serviceId(), "user", context.principal().subject(),
+                "approval_decided", "approval_request", requestId.toString(), "success",
+                request.proposalHash(), hash(command.decision() + ":" + requestVersion), null,
+                java.util.Map.of("decision", command.decision().name().toLowerCase(java.util.Locale.ROOT),
+                        "status", nextStatus.databaseValue())));
         return response(
                 HttpStatus.OK,
                 view(
@@ -321,6 +336,10 @@ public class ApprovalApplicationService {
                 context.principal().subject(),
                 objectMapper.writeValueAsString(payload),
                 invalidatedAt);
+        audit.record(new AuditCommand(proposal.serviceId(), "user", context.principal().subject(),
+                "approval_invalidated", "approval_request", request.id().toString(), "failure",
+                request.proposalHash(), null, null,
+                java.util.Map.of("status", status.databaseValue(), "reasonCode", reason)));
         var body = objectMapper.createObjectNode()
                 .put("errorCode", "APPROVAL_INVALIDATED")
                 .put("detail", "The approval request is expired or no longer matches its proposal.");
@@ -412,6 +431,7 @@ public class ApprovalApplicationService {
     }
 
     private void authorizeRequester(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.REQUEST_APPROVAL, serviceId);
         if (!principal.hasAnyRole(
                         PlatformRole.ON_CALL_OPERATOR, PlatformRole.PLATFORM_ADMIN)
                 || !principal.canAccess(serviceId)) {
@@ -423,6 +443,7 @@ public class ApprovalApplicationService {
     }
 
     private void authorizeApprover(CurrentPrincipal principal, UUID serviceId) {
+        AuthorizationService.require(principal, AuthorizationService.Action.APPROVE, serviceId);
         if (!principal.hasAnyRole(PlatformRole.SRE_APPROVER, PlatformRole.PLATFORM_ADMIN)
                 || !principal.canAccess(serviceId)) {
             throw problem(

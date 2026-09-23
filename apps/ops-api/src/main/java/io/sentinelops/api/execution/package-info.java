@@ -5,6 +5,7 @@
             "incident :: domain",
             "knowledge :: domain",
             "shared :: id",
+            "shared :: audit",
             "shared :: idempotency",
             "shared :: problem",
             "shared :: time"

@@ -89,7 +89,7 @@ class ManualResolutionIT extends ExecutionFixtureSupport {
                         .single())
                 .contains("objective verification");
         assertThat(jdbc.sql("""
-                                select metadata ->> 'reason'
+                                select metadata::text
                                 from audit_record
                                 where resource_id = :incidentId
                                   and action = 'incident.manual_verification_requested'
@@ -97,7 +97,18 @@ class ManualResolutionIT extends ExecutionFixtureSupport {
                         .param("incidentId", fixture.incidentId().toString())
                         .query(String.class)
                         .single())
-                .contains("objective verification");
+                .doesNotContain("reason", "objective verification")
+                .contains("verifying");
+        assertThat(jdbc.sql("""
+                                select result
+                                from audit_record
+                                where resource_id = :incidentId
+                                  and action = 'incident.manual_verification_requested'
+                                """)
+                        .param("incidentId", fixture.incidentId().toString())
+                        .query(String.class)
+                        .single())
+                .isEqualTo("success");
         assertThat(jdbc.sql("""
                                 select runbook_version_id
                                 from verification_cycle

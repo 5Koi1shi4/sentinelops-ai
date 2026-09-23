@@ -21,6 +21,16 @@ class EvalRunIT extends PostgresIntegrationTest {
         var second = evaluations.run(new EvalApplicationService.RunRequest("incidents-v1", first.id()), UUID.randomUUID().toString(), principal);
         assertThat(first.status()).isEqualTo("completed");
         assertThat(second.status()).isEqualTo("completed");
+        assertThat(jdbc.sql("""
+                        select coalesce(after_hash, '<missing>') from audit_record
+                        where resource_type='eval_run' and resource_id=:run and action='eval_started'
+                        """).param("run", first.id().toString()).query(String.class).single())
+                .isEqualTo(first.datasetChecksum());
+        assertThat(jdbc.sql("""
+                        select metadata::text from audit_record
+                        where resource_type='eval_run' and resource_id=:run and action='eval_started'
+                        """).param("run", first.id().toString()).query(String.class).single())
+                .doesNotContain("datasetChecksum");
         assertThat(first.results()).hasSize(12);
         assertThat(second.results()).extracting(EvalApplicationService.ResultView::scores)
                 .containsExactlyElementsOf(first.results().stream().map(EvalApplicationService.ResultView::scores).toList());

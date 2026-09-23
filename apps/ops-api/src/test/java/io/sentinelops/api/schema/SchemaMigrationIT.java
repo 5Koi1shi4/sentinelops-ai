@@ -64,7 +64,8 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "diagnosis_run_evidence_snapshot_idx",
                 "verification_cycle_reclaim_idx",
                 "verification_cycle_incident_running_uk",
-                "verification_attempt_cycle_time_idx");
+                "verification_attempt_cycle_time_idx",
+                "audit_record_cursor_idx");
 
         var currentVersion = jdbc.sql("""
                         select version
@@ -76,7 +77,24 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("15");
+        assertThat(currentVersion).isEqualTo("16");
+
+        var auditColumns = jdbc.sql("""
+                        select column_name
+                        from information_schema.columns
+                        where table_schema = 'public' and table_name = 'audit_record'
+                        """)
+                .query(String.class)
+                .list();
+        assertThat(auditColumns).contains("result");
+        var principalColumns = jdbc.sql("""
+                        select column_name
+                        from information_schema.columns
+                        where table_schema = 'public' and table_name = 'principal'
+                        """)
+                .query(String.class)
+                .list();
+        assertThat(principalColumns).contains("claims_issued_at");
 
         var executionColumns = jdbc.sql("""
                         select column_name
