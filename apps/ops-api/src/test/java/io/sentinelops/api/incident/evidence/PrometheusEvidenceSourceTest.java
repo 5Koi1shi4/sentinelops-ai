@@ -55,6 +55,16 @@ class PrometheusEvidenceSourceTest implements EvidenceSourceContractTest {
         assertThat(result.warnings()).containsExactly("partial result");
         assertThat(result.truncated()).isFalse();
     }
+    @Test void acceptsMillisecondPrometheusTimestampsAroundNanosecondRequestBounds() {
+        server.stubFor(get(urlPathEqualTo(endpoint())).willReturn(okJson("""
+                {"status":"success","data":{"resultType":"matrix","result":[
+                  {"metric":{"instance":"checkout-1"},"values":[[1790035200,"1"],[1790035500.001,"2"]]}]}}
+                """)));
+        var fractional = new EvidenceQuery(java.util.UUID.randomUUID(), SERVICE, "checkout",
+                Map.of("instance", "checkout-1"), FROM.plusNanos(567_000),
+                FROM.plusSeconds(300).plusNanos(567_000));
+        assertThat(source().capture(fractional, budget()).items()).hasSize(2);
+    }
     @Test void hashesIndependentlyOfProviderSeriesAndSampleOrder() {
         server.stubFor(get(urlPathEqualTo(endpoint())).willReturn(okJson(successfulBody())));
         var first = source().capture(query(), budget());

@@ -22,6 +22,10 @@ public final class FaultState {
                         current.get() == FaultMode.NONE ? 0.0 : 1.0)
                 .description("Whether the controlled Demo fault is active")
                 .register(meters);
+        Gauge.builder("demo_pool_pending", mode, current ->
+                        current.get() == FaultMode.CONNECTION_POOL_EXHAUSTED ? 12.0 : 0.0)
+                .description("Controlled pending connection acquisitions in the Demo fault")
+                .register(meters);
         recoverySideEffects = Counter.builder("demo.recovery.side.effect")
                 .description("Number of recovery actions that changed Demo service state")
                 .register(meters);

@@ -397,11 +397,7 @@ it("clears a failed save retry when navigating to another version route", async 
     );
     const pathA = `/runbooks/${RUNBOOK_KEY}/versions/${versionA.id}`;
     const pathB = `/runbooks/${RUNBOOK_KEY}/versions/${versionB.id}`;
-    renderEditor(
-        runbookAdmin,
-        pathA,
-        <EditorTestHarness switchTo={pathB} />,
-    );
+    renderEditor(runbookAdmin, pathA, <EditorTestHarness switchTo={pathB} />);
 
     const markdown = await screen.findByLabelText("操作说明（Markdown）");
     await user.clear(markdown);

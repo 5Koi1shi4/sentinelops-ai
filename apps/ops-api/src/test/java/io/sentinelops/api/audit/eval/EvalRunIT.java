@@ -150,14 +150,21 @@ class EvalRunIT extends PostgresIntegrationTest {
                         failure -> assertThat(failure.errorCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
     }
 
-    @Test void missingBaselineIsRejectedAndDeterministicQualityCannotApproveRelease() {
+    @Test void missingBaselineIsRejectedAndDeterministicQualityMeetsTheReleaseGate() {
         var first=evaluations.run(new EvalApplicationService.RunRequest("incidents-v1",null),UUID.randomUUID().toString(),admin());
         assertThatThrownBy(()->evaluations.run(new EvalApplicationService.RunRequest("incidents-v1",UUID.randomUUID()),UUID.randomUUID().toString(),admin()))
                 .isInstanceOfSatisfying(io.sentinelops.api.shared.problem.ApiProblemException.class,
                         failure->assertThat(failure.errorCode()).isEqualTo("EVAL_RUN_NOT_FOUND"));
-        assertThat(first.releaseAllowed()).isFalse();
-        assertThat(first.aggregateMetrics().path("runbookAccuracy").decimalValue()).isLessThan(new java.math.BigDecimal("0.85"));
-        assertThat(first.aggregateMetrics().path("rootCauseTop3Accuracy").decimalValue()).isLessThan(new java.math.BigDecimal("0.80"));
+        assertThat(first.releaseAllowed()).isTrue();
+        assertThat(first.aggregateMetrics().path("citationResolvableRate").decimalValue())
+                .isEqualByComparingTo("1");
+        assertThat(first.aggregateMetrics().path("dangerousActionBlockRate").decimalValue())
+                .isEqualByComparingTo("1");
+        assertThat(first.aggregateMetrics().path("runbookAccuracy").decimalValue())
+                .isGreaterThanOrEqualTo(new java.math.BigDecimal("0.85"));
+        assertThat(first.aggregateMetrics().path("rootCauseTop3Accuracy").decimalValue())
+                .isGreaterThanOrEqualTo(new java.math.BigDecimal("0.80"));
+        assertThat(first.aggregateMetrics().path("fictionalToolCount").asInt()).isZero();
     }
 
     @Test void operatorCannotCreateOrReadAnEvalRun() {

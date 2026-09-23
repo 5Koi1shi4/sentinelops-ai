@@ -37,10 +37,16 @@ services:
       SENTINELOPS_DEMO_MODE: "true"
       SENTINELOPS_DEMO_JWKS_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/certs
       SENTINELOPS_DEMO_ISSUER: http://localhost:8081/realms/sentinelops
+      LOGGING_FILE_NAME: /var/log/sentinelops/demo-service.json
+      LOGGING_STRUCTURED_FORMAT_FILE: logstash
+    volumes:
+      - demo_logs:/var/log/sentinelops
+    ports:
+      - "127.0.0.1:8082:8082"
     depends_on:
       keycloak:
         condition: service_healthy
-    networks: [control-plane, observability]
+    networks: [control-plane, observability, edge]
     healthcheck:
       test:
         [
@@ -86,6 +92,39 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
 
+  loki:
+    image: grafana/loki:3.6.7
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ../observability/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks: [observability, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    command: ["--config=/etc/otelcol/collector.yml"]
+    volumes:
+      - ../observability/otel-collector-stage2a.yml:/etc/otelcol/collector.yml:ro
+      - demo_logs:/var/log/sentinelops:ro
+    depends_on:
+      loki:
+        condition: service_started
+      demo-service:
+        condition: service_healthy
+    networks: [observability]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
   alertmanager:
     image: prom/alertmanager:v0.34.1
     command:
@@ -111,9 +150,19 @@ services:
   ops-api:
     environment:
       SPRING_PROFILES_ACTIVE: demo
+      SENTINELOPS_EVIDENCE_MODE: real
+      SENTINELOPS_PROMETHEUS_URL: http://prometheus:9090
+      SENTINELOPS_LOKI_URL: http://loki:3100
     depends_on:
       keycloak:
         condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    networks: [control-plane, observability]
 
   ops-executor:
     depends_on:
@@ -131,3 +180,5 @@ networks:
 volumes:
   prometheus_data:
   alertmanager_data:
+  loki_data:
+  demo_logs:

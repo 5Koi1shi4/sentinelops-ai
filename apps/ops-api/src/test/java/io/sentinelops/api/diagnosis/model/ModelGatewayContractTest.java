@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 import io.sentinelops.api.diagnosis.adapter.out.model.DeterministicModelGateway;
 import io.sentinelops.api.diagnosis.application.DeterministicDiagnosisEngine;
@@ -12,6 +15,11 @@ import io.sentinelops.api.diagnosis.application.model.ToolBudget;
 import io.sentinelops.api.diagnosis.application.tool.ToolContext;
 import io.sentinelops.api.diagnosis.domain.DiagnosisContext;
 import io.sentinelops.api.diagnosis.domain.DiagnosisEvidence;
+import io.sentinelops.api.diagnosis.application.tool.EvidenceTools;
+import io.sentinelops.api.incident.application.evidence.EvidenceBudget;
+import io.sentinelops.api.incident.application.evidence.EvidenceCapture;
+import io.sentinelops.api.incident.application.evidence.EvidencePlan;
+import io.sentinelops.api.incident.application.evidence.EvidenceSnapshot;
 import io.sentinelops.api.knowledge.application.RunbookCatalog;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import io.sentinelops.api.knowledge.domain.RunbookVersion;
@@ -21,6 +29,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -53,6 +62,43 @@ class ModelGatewayContractTest {
         assertThat(result.latencyMs()).isGreaterThanOrEqualTo(0);
         assertThat(result.inputHash()).isNotBlank();
         assertThat(result.responseHash()).isNotBlank();
+    }
+
+    @Test
+    void realEvidenceGatewayCapturesRegisteredQueriesAndCitesFrozenSnapshots() {
+        var runbooks = mock(RunbookCatalog.class);
+        var runbook = publishedRunbook();
+        when(runbooks.findPublished("RB-DB-POOL-03", SERVICE_ID)).thenReturn(Optional.of(runbook));
+        var capture = mock(EvidenceCapture.class);
+        when(capture.captureAndFreeze(any(), any(), any())).thenAnswer(invocation -> {
+            EvidencePlan plan = invocation.getArgument(2);
+            var query = plan.requests().getFirst();
+            var payload = switch (query.queryId()) {
+                case "pool_pending" -> objectMapper.readTree("""
+                        {"items":[{"timestamp":"1780000000","value":"12","labels":{}}]}
+                        """);
+                case "acquire_timeout_logs" -> objectMapper.readTree("""
+                        {"items":[{"timestamp":"1780000000000000000","value":"Demo checkout acquire timeout","labels":{}}]}
+                        """);
+                default -> objectMapper.readTree("{" + "\"items\":[]}");
+            };
+            return List.of(new EvidenceSnapshot(UUID.randomUUID(), query.sourceType(), query.queryId(),
+                    TO, "a".repeat(64), false, 0, Set.of(), payload));
+        });
+        var gateway = new DeterministicModelGateway(new DeterministicDiagnosisEngine(runbooks),
+                new EvidenceTools(capture, new EvidenceBudget(200, 128 * 1024, Duration.ofMinutes(15))),
+                objectMapper);
+
+        var context = new DiagnosisContext(INCIDENT_ID, 1, SERVICE_ID, List.of(),
+                RUN_ID, FROM, TO, "published-v1");
+        var result = gateway.diagnose(new ModelDiagnosisRequest(context,
+                new ToolContext(INCIDENT_ID, RUN_ID, SERVICE_ID, FROM, TO),
+                "diagnosis-system-v1", ToolBudget.defaults()));
+
+        assertThat(result.proposal().runbookVersionId()).isEqualTo(runbook.id());
+        assertThat(result.proposal().hypotheses().getFirst().evidenceRefs()).hasSize(2);
+        assertThat(result.toolCallCount()).isEqualTo(4);
+        verify(capture, times(4)).captureAndFreeze(any(), any(), any());
     }
 
     @Test

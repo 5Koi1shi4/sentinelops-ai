@@ -1,0 +1,21 @@
+receivers:
+  filelog/demo:
+    include: [/var/log/sentinelops/demo-service.json]
+    start_at: beginning
+    resource:
+      service.name: sentinelops-demo-service
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog/demo]
+      processors: [batch]
+      exporters: [otlphttp/loki]

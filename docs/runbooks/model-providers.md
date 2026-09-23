@@ -43,4 +43,4 @@ sentinelops:
 - 记录 provider、model、prompt/corpus 版本、输入/响应哈希、用量、工具次数和耗时；失败记录保留可获得的安全元数据。常规日志不记录完整 prompt、原始证据、工具参数/结果或原始模型响应。
 - R0 可返回人工调查建议；动作提案仍经过服务端策略检查和既有审批流程，模型不能调用执行入口。
 
-本地验收使用 WireMock 调用真实 Spring AI OpenAI/Ollama SDK，并用真实 PostgreSQL 验证提案与运行状态。它不代表外部供应商可用性或语义质量已经验收。真实 Prometheus/Loki 来源的 profile 装配及 Stage 2A 端到端验收仍按 Task 8 推进。
+本地验收使用 WireMock 调用真实 Spring AI OpenAI/Ollama SDK，并用真实 PostgreSQL 验证提案与运行状态。Stage 2A Demo 的 `sentinelops.evidence.mode=real` 通过 Prometheus/Loki 实际来源采集证据；默认确定性模型只证明安全边界与基线可复现，不代表外部供应商可用性或语义质量已经验收。真实供应商需另行配置并运行烟测及对应 Eval。

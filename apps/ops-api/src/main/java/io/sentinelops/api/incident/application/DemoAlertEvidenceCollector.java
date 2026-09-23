@@ -9,10 +9,12 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
 import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
 @Profile("demo")
+@ConditionalOnProperty(name = "sentinelops.evidence.mode", havingValue = "fixture", matchIfMissing = true)
 final class DemoAlertEvidenceCollector implements AlertEvidenceCollector {
 
     private static final String DEMO_SERVICE = "checkout-api";

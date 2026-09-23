@@ -320,8 +320,7 @@ function RunbookEditorRoute() {
         updateMutation.isPending ||
         reviewMutation.isPending ||
         publishMutation.isPending;
-    const canChangeForm =
-        canEdit && !isMutationPending && !pendingCommand;
+    const canChangeForm = canEdit && !isMutationPending && !pendingCommand;
     const numericAttempts = Number(form.attempts);
     const numericInterval = Number(form.intervalSeconds);
     const isFormValid = Boolean(

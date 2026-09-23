@@ -4,7 +4,7 @@ SentinelOps AI 是一个面向单组织内部使用的事故响应平台。Stage
 
 ## 快速启动
 
-前置条件：Docker Desktop（Linux 容器）、PowerShell 7，以及未占用的本机端口 `4173`、`8081`、`9090`、`9093`。
+前置条件：Docker Desktop（Linux 容器）、PowerShell 7，以及未占用的本机端口 `4173`、`8081`、`8082`、`9090`、`9093`、`3100`。
 
 ```powershell
 .\scripts\demo.ps1
@@ -19,12 +19,13 @@ SentinelOps AI 是一个面向单组织内部使用的事故响应平台。Stage
 | `observer-demo` | `observer-demo` | `OBSERVER` | 只读查看事故 |
 | `operator-demo` | `operator-demo` | `OBSERVER`, `ON_CALL_OPERATOR` | 诊断、提交审批、启动执行 |
 | `approver-demo` | `approver-demo` | `OBSERVER`, `SRE_APPROVER` | 独立批准 R1 变更 |
+| `platform-admin-demo` | `platform-admin-demo` | `PLATFORM_ADMIN` | 查看和运行 AI Eval 治理 |
 
 完整演示步骤见 [Demo 运维手册](docs/runbooks/demo-flow.md)。
 
-Stage 1 使用固定的 Demo 证据与确定性诊断适配器；Prometheus/Alertmanager 告警、OIDC 登录、审批、执行和恢复探针是真实链路。真实监控证据与模型集成按 Stage 2A 计划推进。
+Demo 现从 Prometheus 采集错误率、延迟及连接池等待指标，并从 Loki 采集故障日志；OpenTelemetry Collector 负责日志转发。诊断默认仍使用可重复的确定性模型，固定证据仅供显式 fixture 模式与测试使用。OpenAI-compatible 和 Ollama 可按[模型配置](docs/runbooks/model-providers.md)单独启用与烟测。
 
-Stage 2A 当前实施位置、设计修订和验证命令见 [实施进度](docs/runbooks/stage-2a-progress.md)。
+Stage 2A 的实施与验收记录见 [实施进度](docs/runbooks/stage-2a-progress.md)，模型边界和知识检索决策见 [ADR 0001](docs/adr/0001-ai-provider-and-tool-boundary.md) 与 [ADR 0002](docs/adr/0002-hybrid-knowledge-search.md)。
 
 > 这些密码、客户端密钥和数据库默认值只用于隔离的本地 Demo。不要把它们复用到测试共享环境或生产环境。
 
@@ -36,7 +37,7 @@ Stage 2A 当前实施位置、设计修订和验证命令见 [实施进度](docs
 - `ops-executor`：独立 Java 执行单元。它只接受签名执行票据，并以 fencing token、幂等键和最小 OAuth scope 调用目标服务。
 - `ops-console`：React 控制台，使用 Keycloak Authorization Code + PKCE；浏览器不持有服务客户端密钥。
 - `demo-service`：只在 Demo profile 启用故障注入与恢复端点，并分别校验 `demo:fault` 和 `runbook:execute:checkout` scope。
-- PostgreSQL/pgvector 保存事务状态与不可变记录，Valkey Stream 传递执行请求，Prometheus 与 Alertmanager 构成演示告警源。
+- PostgreSQL/pgvector 保存事务状态与不可变记录，Valkey Stream 传递执行请求，Prometheus 与 Alertmanager 构成演示告警源，Loki 保存经 Collector 转发的结构化日志。
 
 控制平面、执行器、数据库和 Valkey 只位于 Compose 私有网络。仅下列本机地址被发布：
 
@@ -46,6 +47,8 @@ Stage 2A 当前实施位置、设计修订和验证命令见 [实施进度](docs
 | [http://localhost:8081](http://localhost:8081) | Keycloak |
 | [http://localhost:9090](http://localhost:9090) | Prometheus（本地诊断） |
 | [http://localhost:9093](http://localhost:9093) | Alertmanager（本地诊断） |
+| [http://localhost:8082](http://localhost:8082) | Demo 目标服务（本地验收） |
+| [http://localhost:3100](http://localhost:3100) | Loki（本地诊断） |
 
 ## 完整验收
 
@@ -55,7 +58,15 @@ Stage 2A 当前实施位置、设计修订和验证命令见 [实施进度](docs
 .\scripts\verify.ps1
 ```
 
-验收会从干净数据卷开始，依次运行 Java 单元/模块/集成测试、前端安装/静态检查/Vitest/生产构建、Compose 校验与健康检查、Playwright 浏览器全流程，并重投同一条 Valkey Stream 执行消息验证恢复副作用只发生一次。无论成功或失败都会关闭并删除本次 Compose 数据卷，日志与浏览器工件保存在 `build/verification/<timestamp>/`。
+Stage 1 闭环验收会从干净数据卷开始，依次运行 Java 单元/模块/集成测试、前端安装/静态检查/Vitest/生产构建、Compose 校验与健康检查、Playwright 浏览器全流程，并重投同一条 Valkey Stream 执行消息验证恢复副作用只发生一次。无论成功或失败都会关闭并删除本次 Compose 数据卷，日志与浏览器工件保存在 `build/verification/<timestamp>/`。
+
+Stage 2A 真实证据、AI Eval 和治理闭环验收运行：
+
+```powershell
+.\scripts\verify-stage2a.ps1
+```
+
+该脚本使用独立的 `sentinelops-stage2a` Compose 项目和干净数据卷；验收报告保存在 `build/verification/stage2a/<timestamp>/`。真实模型烟测仅在显式配置模型提供方及凭据时执行，不属于默认确定性发布门禁。
 
 如需手动停止 Demo 并清除本地数据：
 

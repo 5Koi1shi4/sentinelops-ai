@@ -140,9 +140,7 @@ export function useRunbookDiff(
                 `/runbook-versions/${beforeVersionId}/diff?${new URLSearchParams({ otherVersionId: afterVersionId })}`,
                 { headers: authorizationHeaders(user?.accessToken), signal },
             ),
-        enabled: Boolean(
-            user && beforeVersionId && afterVersionId && enabled,
-        ),
+        enabled: Boolean(user && beforeVersionId && afterVersionId && enabled),
         retry: false,
     });
 }

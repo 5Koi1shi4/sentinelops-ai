@@ -893,11 +893,11 @@ git commit -m "feat: complete scoped identity and audit"
 - Produces: optional `MODEL_PROVIDER=openai-compatible` and `MODEL_PROVIDER=ollama` smoke commands.
 - Consumes: all Stage 2A features.
 
-- [ ] **Step 1: Write the failing real-evidence integration test**
+- [x] **Step 1: Write the failing real-evidence integration test**
 
 The test starts the Demo stack, creates checkout fault traffic, waits for Prometheus samples and Loki log entry, runs diagnosis, then asserts persisted evidence source types, hashes, citations, Runbook version and tool-call count. It must fail if a fixed fixture adapter is selected.
 
-- [ ] **Step 2: Run Stage 2A verification and observe the missing integration**
+- [x] **Step 2: Run Stage 2A verification and observe the missing integration**
 
 Run:
 
@@ -907,17 +907,17 @@ Run:
 
 Expected: FAIL before Loki/collector wiring and real evidence profile are complete.
 
-- [ ] **Step 3: Wire real evidence without changing domain code**
+- [x] **Step 3: Wire real evidence without changing domain code**
 
 Add Loki 3.6.7 and OpenTelemetry Collector 0.161.0 to Demo Compose. Send structured Demo service logs through OTLP or a configured collector path to Loki. Configure service-catalog query IDs for error rate, latency, pool pending and acquire-timeout logs. Do not expose Loki directly beyond localhost development binding.
 
 显式选择 `sentinelops.evidence.mode=real`，在保留 demo-service 故障入口的同时关闭固定 `DemoAlertEvidenceCollector`。用 context/集成测试证明 real 模式同时具有 Prometheus/Loki 来源、恰好一个 capture 编排器，且新事故没有固定 `E-12`/`E-13` 快照；恢复验证继续使用已批准的 Runbook probe。
 
-- [ ] **Step 4: Implement the Stage 2A verification script**
+- [x] **Step 4: Implement the Stage 2A verification script**
 
 Run, in order: Maven verify; frontend API drift/lint/test/build; deterministic Eval twice; Compose Demo startup; real evidence integration test; Playwright incident and governance tests; prompt-injection test; optional real-provider smoke only when required env vars exist. Save sanitized reports under `build/verification/stage2a/`.
 
-- [ ] **Step 5: Run the complete Stage 2A gate**
+- [x] **Step 5: Run the complete Stage 2A gate**
 
 Run:
 
@@ -927,7 +927,7 @@ Run:
 
 Expected: PASS; real Prometheus/Loki evidence is cited, all five Eval thresholds pass for the deterministic baseline, governance UI works, and no real provider key is required for the mandatory gate.
 
-- [ ] **Step 6: Commit the formal integration milestone and continue**
+- [x] **Step 6: Commit the formal integration milestone and continue**
 
 ```powershell
 git add deploy apps web scripts README.md docs/adr

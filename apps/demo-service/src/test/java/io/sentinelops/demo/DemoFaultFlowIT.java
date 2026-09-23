@@ -58,7 +58,16 @@ class DemoFaultFlowIT {
         mockMvc.perform(get("/actuator/prometheus"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(
-                        "demo_fault_active")));
+                        "demo_fault_active")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "demo_pool_pending 0.0")));
+
+        mockMvc.perform(post("/internal/demo/faults/connection-pool")
+                        .with(faultController()))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "demo_pool_pending 12.0")));
     }
 
     @Test

@@ -68,7 +68,11 @@ final class EvidenceResponseNormalizer {
                 }
                 if (numeric.signum() < 0 || numeric.scale() > 9 || Math.abs((long) numeric.scale()) > 32) throw malformed();
                 var instant = metrics ? numeric : numeric.movePointLeft(9);
-                if (instant.compareTo(from) < 0 || instant.compareTo(to) > 0) throw malformed();
+                // Prometheus JSON rounds timestamps to millisecond precision even when
+                // the server-owned window has nanoseconds. Keep the tolerance bounded.
+                var precision = metrics ? BigDecimal.valueOf(1, 3) : BigDecimal.ZERO;
+                if (instant.compareTo(from.subtract(precision)) < 0
+                        || instant.compareTo(to.add(precision)) > 0) throw malformed();
                 if (metrics && (value.length() > 128 || !value.matches("(?:[-+]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?|NaN|[+-]Inf)"))) throw malformed();
                 items.add(new CapturedEvidence.EvidenceItem(numeric.stripTrailingZeros().toPlainString(), value, labels));
             }

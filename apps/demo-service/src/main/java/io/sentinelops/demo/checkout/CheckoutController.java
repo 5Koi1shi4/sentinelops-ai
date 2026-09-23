@@ -5,14 +5,12 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.sentinelops.demo.fault.FaultMode;
 import io.sentinelops.demo.fault.FaultState;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -39,20 +37,13 @@ public class CheckoutController {
     }
 
     @PostMapping
-    ResponseEntity<?> checkout(
-            @RequestHeader(value = "X-Request-ID", required = false) String requestId) {
+    ResponseEntity<?> checkout() {
         Timer.Sample sample = Timer.start(meters);
         requests.increment();
         try {
             if (faults.mode() == FaultMode.CONNECTION_POOL_EXHAUSTED) {
                 errors.increment();
-                String safeRequestId = requestId == null || requestId.isBlank()
-                        ? UUID.randomUUID().toString()
-                        : requestId.substring(0, Math.min(requestId.length(), 128));
-                LOG.warn(
-                        "Demo checkout unavailable requestId={} faultMode={}",
-                        safeRequestId,
-                        faults.mode());
+                LOG.warn("Demo checkout acquire timeout faultMode={}", faults.mode());
                 var problem = ProblemDetail.forStatusAndDetail(
                         HttpStatus.SERVICE_UNAVAILABLE,
                         "The controlled Demo connection pool fault is active.");

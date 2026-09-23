@@ -1,25 +1,11 @@
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import path from "node:path";
-
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-const execFileAsync = promisify(execFile);
-const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const composeFiles = [
-    "compose",
-    "-p",
-    "sentinelops",
-    "-f",
-    path.join(repositoryRoot, "deploy/compose/compose.core.yml"),
-    "-f",
-    path.join(repositoryRoot, "deploy/compose/compose.demo.yml"),
-];
 const keycloakBaseUrl =
     process.env.SENTINELOPS_KEYCLOAK_URL ?? "http://localhost:8081";
 const prometheusBaseUrl =
     process.env.SENTINELOPS_PROMETHEUS_URL ?? "http://localhost:9090";
+const lokiBaseUrl = process.env.SENTINELOPS_LOKI_URL ?? "http://localhost:3100";
+const demoBaseUrl = process.env.SENTINELOPS_DEMO_URL ?? "http://localhost:8082";
 const demoControllerSecret =
     process.env.SENTINELOPS_DEMO_CONTROLLER_CLIENT_SECRET ??
     "sentinelops-demo-controller-secret";
@@ -60,25 +46,60 @@ async function demoControllerToken(): Promise<string> {
 
 async function injectDemoFault(): Promise<void> {
     const token = await demoControllerToken();
-    const { stdout } = await execFileAsync(
-        "docker",
-        [
-            ...composeFiles,
-            "exec",
-            "-T",
-            "demo-service",
-            "wget",
-            "-qO-",
-            "--header",
-            `Authorization: Bearer ${token}`,
-            "--post-data=",
-            "http://127.0.0.1:8082/internal/demo/faults/connection-pool",
-        ],
-        { cwd: repositoryRoot },
+    const response = await fetch(
+        `${demoBaseUrl}/internal/demo/faults/connection-pool`,
+        {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+        },
     );
-    expect(JSON.parse(stdout) as { active: boolean }).toMatchObject({
+    expect(response.status).toBe(200);
+    expect((await response.json()) as { active: boolean }).toMatchObject({
         active: true,
     });
+}
+
+async function waitForRealEvidence(): Promise<void> {
+    for (let batch = 0; batch < 2; batch += 1) {
+        for (let request = 0; request < 12; request += 1) {
+            const response = await fetch(`${demoBaseUrl}/api/checkout`, {
+                method: "POST",
+            });
+            expect(response.status).toBe(503);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+    }
+    await expect
+        .poll(
+            async () => {
+                const metric = await fetch(
+                    `${prometheusBaseUrl}/api/v1/query?query=demo_pool_pending`,
+                );
+                const logs = await fetch(
+                    `${lokiBaseUrl}/loki/api/v1/query_range?query=${encodeURIComponent(
+                        '{service_name="sentinelops-demo-service"} |= "Demo checkout acquire timeout"',
+                    )}`,
+                );
+                if (!metric.ok || !logs.ok) return false;
+                const metricBody = (await metric.json()) as {
+                    data?: { result?: Array<{ value?: [number, string] }> };
+                };
+                const logBody = (await logs.json()) as {
+                    data?: {
+                        result?: Array<{ values?: Array<[string, string]> }>;
+                    };
+                };
+                return (
+                    Number(metricBody.data?.result?.[0]?.value?.[1] ?? 0) > 0 &&
+                    (logBody.data?.result?.some(
+                        (stream) => (stream.values?.length ?? 0) > 0,
+                    ) ??
+                        false)
+                );
+            },
+            { timeout: 60_000 },
+        )
+        .toBe(true);
 }
 
 async function loginAs(browser: Browser, username: string): Promise<Page> {
@@ -109,9 +130,15 @@ async function waitForIncident(page: Page, serviceKey: string): Promise<Page> {
 
 async function runDiagnosisAndSubmitApproval(page: Page): Promise<void> {
     await page.getByRole("button", { name: "运行证据诊断" }).click();
-    await expect(page.getByRole("link", { name: "E-12" })).toBeVisible({
+    await expect(
+        page.getByRole("link", { name: "pool_pending" }).first(),
+    ).toBeVisible({
         timeout: 30_000,
     });
+    await expect(
+        page.getByRole("link", { name: "acquire_timeout_logs" }).first(),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "E-12" })).toHaveCount(0);
     await page.getByRole("button", { name: "提交审批" }).click();
     await expect(page.getByText("PENDING", { exact: true })).toBeVisible();
 }
@@ -166,6 +193,7 @@ test("detects, diagnoses, approves, executes, and verifies one incident", async 
     browser,
 }) => {
     await injectDemoFault();
+    await waitForRealEvidence();
 
     const operator = await loginAs(browser, "operator-demo");
     const incident = await waitForIncident(operator, "checkout-api");

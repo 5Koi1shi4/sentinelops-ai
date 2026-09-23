@@ -403,6 +403,21 @@
       }
     },
     {
+      "username": "platform-admin-demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Platform Admin",
+      "email": "platform-admin-demo@sentinelops.invalid",
+      "credentials": [
+        { "type": "password", "value": "platform-admin-demo", "temporary": false }
+      ],
+      "realmRoles": ["PLATFORM_ADMIN"],
+      "attributes": {
+        "service_ids": ["0199a000-0000-7000-8000-000000000001"]
+      }
+    },
+    {
       "username": "service-account-sentinelops-executor",
       "enabled": true,
       "serviceAccountClientId": "sentinelops-executor",

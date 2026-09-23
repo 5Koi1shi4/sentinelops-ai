@@ -169,10 +169,7 @@ export function renderEditor(
             <AuthProvider user={user}>
                 <MemoryRouter initialEntries={[initialPath]}>
                     <Routes>
-                        <Route
-                            path="/runbooks/new"
-                            element={routeElement}
-                        />
+                        <Route path="/runbooks/new" element={routeElement} />
                         <Route
                             path="/runbooks/:key/versions/:id"
                             element={routeElement}

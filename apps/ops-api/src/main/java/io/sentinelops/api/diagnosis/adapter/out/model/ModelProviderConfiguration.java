@@ -38,12 +38,14 @@ public class ModelProviderConfiguration {
     }
     @Bean DiagnosisEngine diagnosisEngine(ModelGateway gateway) { return new ModelBackedDiagnosisEngine(gateway); }
     @Bean ModelGateway modelGateway(ProviderSettings settings, RunbookCatalog catalog, DiagnosisToolConfiguration tools,
-                                    ToolCallingManager manager,ObservationRegistry observations) {
-        return createGateway(settings, catalog, tools, manager, observations);
+                                    EvidenceTools evidence, ToolCallingManager manager,
+                                    ObservationRegistry observations, ObjectMapper mapper, Environment environment) {
+        return createGateway(settings, catalog, tools, evidence, manager, observations, mapper,
+                environment, true);
     }
 
     @Bean ModelGatewayFactory modelGatewayFactory(ProviderSettings settings, EmbeddingGateway embeddings,
-            ToolCallingManager manager, ObservationRegistry observations, ObjectMapper mapper) {
+            ToolCallingManager manager, ObservationRegistry observations, ObjectMapper mapper, Environment environment) {
         String prompt;
         try { prompt=new org.springframework.core.io.ClassPathResource("prompts/diagnosis-system-v1.st")
                 .getContentAsString(java.nio.charset.StandardCharsets.UTF_8); }
@@ -62,17 +64,23 @@ public class ModelProviderConfiguration {
                         "diagnosis-system-v1", "read-tools-v1", embeddings.modelId(),promptHash,toolsetHash,configHash);
             }
             @Override public Session open(EvidenceCapture evidence, RunbookLookup catalog, KnowledgeSearch search) {
-                var callbacks = new DiagnosisToolConfiguration(new EvidenceTools(evidence,
-                        new EvidenceBudget(200, 128*1024, Duration.ofMinutes(15))), search, embeddings, catalog, mapper);
-                return new Session(createGateway(settings, catalog, callbacks, manager, observations));
+                var evidenceTools = new EvidenceTools(evidence,
+                        new EvidenceBudget(200, 128*1024, Duration.ofMinutes(15)));
+                var callbacks = new DiagnosisToolConfiguration(evidenceTools, search, embeddings, catalog, mapper);
+                return new Session(createGateway(settings, catalog, callbacks, evidenceTools,
+                        manager, observations, mapper, environment, false));
             }
         };
     }
 
     private ModelGateway createGateway(ProviderSettings settings, RunbookLookup catalog, DiagnosisToolConfiguration tools,
-            ToolCallingManager manager, ObservationRegistry observations) {
+            EvidenceTools evidence, ToolCallingManager manager, ObservationRegistry observations,
+            ObjectMapper mapper, Environment environment, boolean allowLiveEvidence) {
         return switch(settings.provider()) {
-            case "deterministic" -> new DeterministicModelGateway(new DeterministicDiagnosisEngine(catalog));
+            case "deterministic" -> allowLiveEvidence
+                    && "real".equals(environment.getProperty("sentinelops.evidence.mode", "fixture"))
+                    ? new DeterministicModelGateway(new DeterministicDiagnosisEngine(catalog), evidence, mapper)
+                    : new DeterministicModelGateway(new DeterministicDiagnosisEngine(catalog));
             case "manual-only" -> new UnavailableModelGateway();
             case "openai-compatible" -> new SpringAiModelGateway(OpenAiChatModel.builder()
                     .options(OpenAiChatOptions.builder().model(settings.model()).baseUrl(settings.baseUrl())

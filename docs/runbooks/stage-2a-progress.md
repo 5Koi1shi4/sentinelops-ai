@@ -113,14 +113,14 @@ npm --prefix web/ops-console run api:check
 - 聚合使用固定 expectation 决定安全/根因分母，任何非预期错误或不完整覆盖都阻止发布。保存模型/prompt/tool schema/fixture/规则版本及费用单价指纹，价格或用量不可得时明确标记费用不可用。
 - 两次实际 deterministic 运行生成完整稳定投影，递归排序 JSON 后逐字节比较，并校验已提交基线的 UTF-8/LF 字节。模型标识来自服务器配置，真实供应商需固定 snapshot/tag；不声称能从通用兼容协议获知供应商服务软件版本。
 
-当前基线如实反映 Demo 模型的局限，`releaseAllowed=false`：
+Task 8 真实证据接入时同步改进了确定性规则，对陈旧、冲突和无可用 Runbook 的证据给出有引用的 R0 判断，并重新生成可复现基线。当前基线 `releaseAllowed=true`；这只代表固定 Demo 数据集通过发布阈值：
 
 | 指标 | 基线 | 发布要求 |
 | --- | ---: | ---: |
-| 引用可解析率 | 91.67% | 100% |
-| 危险动作拦截率 | 71.43% | 100% |
-| Runbook 准确率 | 83.33% | ≥85% |
-| 根因 Top-3 准确率 | 20% | ≥80% |
+| 引用可解析率 | 100% | 100% |
+| 危险动作拦截率 | 100% | 100% |
+| Runbook 准确率 | 100% | ≥85% |
+| 根因 Top-3 准确率 | 100% | ≥80% |
 | 虚构工具/Runbook 计数 | 0 | 0 |
 
 红—绿证据：`build/task5-red.log` 与 `task5-rules-red.log` 验证缺失实现；`task5-http-citation-red.log` 复现缺失路由与预期拒绝的引用评分问题；`task5-first-green.log` 暴露多个数据库时钟调用造成的微秒级 deadline 约束冲突，已统一使用 statement_timestamp；`task5-focused.log` 暴露跨模块接口未声明，修正后的 `task5-boundary.log` 7 项通过；`task5-review-red.log` 复现满容量重放和仅含换行的空数据集问题。
@@ -168,8 +168,20 @@ Demo Keycloak 将 `service_ids` 定义为仅管理员可查看、编辑的多值
 
 红—绿记录见 `build/task7-*-red.log` 与聚焦绿色日志。最终 Java 21 reactor 回归 `build/task7-full-verify-reviewed.log`：382 项通过（API 343、Executor 29、Demo 10），无失败或跳过；最终测试日志未出现隐私测试中的凭据样本。前端 12 个测试文件、48 项通过；API 生成类型检查、Lint、生产构建及 `git diff --check` 均通过。完整浏览器 OIDC 与真实 Prometheus/Loki 闭环属于 Task 8，尚未验收。
 
+## Task 8：真实证据集成与 Stage 2A 门禁
+
+Demo Compose 现在将结构化服务日志经 OpenTelemetry Collector 送入 Loki，并从 Prometheus/Loki 的预登记查询采集错误率、延迟、连接池等待和获取超时日志。`sentinelops.evidence.mode=real` 关闭固定 `E-12`/`E-13` 证据采集；证据仍经过既有的只读工具、预算、脱敏、冻结和引用校验。演示目标增加受控连接池等待指标，故障日志不包含请求方可控的请求 ID。Keycloak 增加仅供本地治理验收的 `platform-admin-demo`。
+
+真实依赖测试注入受控故障并产生请求流量，等待 Prometheus 指标和 Loki 日志后创建诊断，确认四个查询快照的来源、哈希、两个有效引用、已发布 Runbook 版本和四次只读工具调用。另有 real 模式上下文测试证明恰好装配 Prometheus/Loki 来源、没有固定快照；离线 Eval 即使在 real 模式下也只使用数据集 fixture，不读取或写入在线事故证据。
+
+浏览器验收覆盖完整事故、审批、执行和恢复链路，以及 Observer 只读 Runbook/禁止 Eval、平台管理员查看只读已发布版本和五项 Eval 发布阈值。首轮完整门禁暴露 PowerShell 对健康响应字节数组的误判；修正正文解码后，第二轮发现 real 模式误将在线证据工具带入离线 Eval，导致 `EVIDENCE_NOT_FOUND`。新增真实模式 Eval 回归先红后绿，日志为 `build/task8-real-eval-red.log`、`build/task8-real-eval-green.log`。
+
+最终 `scripts/verify-stage2a.ps1` 于 2026-09-23 通过，报告位于 `build/verification/stage2a/20260923-122744/`：
+
+- Java 21 全量 reactor：API 352 项（1 项真实来源测试按计划延后）、Executor 29 项、Demo 10 项，零失败；Compose 启动后真实来源专项 3 项通过、零跳过。
+- 前端 OpenAPI 类型、Lint、格式、生产构建及 12 个文件的 48 项 Vitest 全通过；两轮确定性 Eval 与已提交基线一致，五项硬阈值通过，`releaseAllowed=true`。
+- Playwright 三项通过；`PromptInjectionIT` 两项通过；Compose 项目及其隔离数据卷已清理。未配置真实模型 provider，故可选供应商烟测未运行；该结果不代表外部模型语义质量或生产部署已验收。
+
 ## 下一实施任务
 
-继续 Task 8：真实 Prometheus/Loki 证据、Demo Compose、治理 E2E 和 Stage 2A 发布门禁。
-
-当前 Demo 仍使用固定证据与确定性模型；Task 2 的安全冻结边界已就绪，真实来源的 profile 装配和端到端接入待 Task 8 完成。Stage 2A 尚未达到发布门禁，不能标记生产就绪。
+Stage 2A 本地发布门禁已通过。继续 Stage 2B Task 1：入站 Webhook 的签名、请求边界、速率与重放保护。生产就绪还取决于 Stage 2B 的安全、故障和部署验收。

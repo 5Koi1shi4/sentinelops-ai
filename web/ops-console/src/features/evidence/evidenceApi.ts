@@ -7,10 +7,7 @@ import { useQueryScope } from "../../auth/useQueryScope";
 
 export type EvidenceSnapshot = components["schemas"]["EvidenceSnapshot"];
 
-export function useEvidenceSnapshot(
-    incidentId: string,
-    evidenceId: string,
-) {
+export function useEvidenceSnapshot(incidentId: string, evidenceId: string) {
     const { user } = useAuth();
     const scope = useQueryScope();
     return useQuery({

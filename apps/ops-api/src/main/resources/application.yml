@@ -44,6 +44,12 @@ spring:
       timeout: 2s
 
 sentinelops:
+  evidence:
+    mode: ${SENTINELOPS_EVIDENCE_MODE:fixture}
+    prometheus:
+      base-url: ${SENTINELOPS_PROMETHEUS_URL:}
+    loki:
+      base-url: ${SENTINELOPS_LOKI_URL:}
   ai:
     provider: ${SENTINELOPS_AI_PROVIDER:deterministic}
   security:

@@ -13,6 +13,7 @@ import io.sentinelops.api.knowledge.domain.RiskLevel;
 import io.sentinelops.api.knowledge.domain.RunbookVersion;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,81 @@ class DeterministicDiagnosisEngineTest {
         assertThat(draft.parameters()).isEmpty();
         assertThat(draft.missingEvidence()).containsExactly("acquire_timeout_count > 0");
         verifyNoInteractions(runbooks);
+    }
+
+    @Test
+    void citesRealPrometheusAndLokiSnapshotsForThePublishedRecovery() {
+        UUID serviceId = UUID.randomUUID();
+        var pending = new DiagnosisEvidence(UUID.randomUUID(), "prometheus", "pool_pending",
+                objectMapper.readTree("""
+                        {"queryId":"pool_pending","items":[{"timestamp":"1780000000","value":"12","labels":{}}]}
+                        """), "hash-pending", Instant.now(), false);
+        var timeoutLog = new DiagnosisEvidence(UUID.randomUUID(), "loki", "acquire_timeout_logs",
+                objectMapper.readTree("""
+                        {"queryId":"acquire_timeout_logs","items":[{"timestamp":"1780000000000000000","value":"{\\"message\\":\\"Demo checkout acquire timeout\\"}","labels":{}}]}
+                        """), "hash-timeout", Instant.now(), false);
+        var runbook = publishedRunbook(serviceId);
+        when(runbooks.findPublished("RB-DB-POOL-03", serviceId)).thenReturn(Optional.of(runbook));
+
+        var draft = engine.diagnose(new DiagnosisContext(
+                UUID.randomUUID(), 0, serviceId, List.of(pending, timeoutLog)));
+
+        assertThat(draft.runbookVersionId()).isEqualTo(runbook.id());
+        assertThat(draft.hypotheses().getFirst().evidenceRefs())
+                .containsExactlyInAnyOrder(pending.id(), timeoutLog.id());
+    }
+
+    @Test
+    void explainsPartialPoolEvidenceWithoutRecommendingRecovery() {
+        var pending = evidence("db_pool_pending", 8);
+        var draft = engine.diagnose(new DiagnosisContext(
+                UUID.randomUUID(), 0, UUID.randomUUID(), List.of(pending)));
+
+        assertThat(draft.runbookVersionId()).isNull();
+        assertThat(draft.hypotheses().getFirst().statement()).containsIgnoringCase("pool saturation");
+        assertThat(draft.hypotheses().getFirst().evidenceRefs()).containsExactly(pending.id());
+        assertThat(draft.missingEvidence()).isNotEmpty();
+    }
+
+    @Test
+    void distinguishesDownstreamTimeoutHighCpuAndConflictingPoolSignals() {
+        for (var sample : List.of(
+                Map.entry("{\"downstream_timeout_count\":18}", "downstream timeout"),
+                Map.entry("{\"cpu_percent\":99}", "high cpu"),
+                Map.entry("{\"db_pool_pending\":0,\"acquire_timeout_count\":10,\"log\":\"pool is healthy\"}",
+                        "conflicting"))) {
+            var evidence = new DiagnosisEvidence(UUID.randomUUID(), "prometheus", "service-health",
+                    objectMapper.readTree(sample.getKey()), "hash", Instant.now(), false);
+            var draft = engine.diagnose(new DiagnosisContext(
+                    UUID.randomUUID(), 0, UUID.randomUUID(), List.of(evidence)));
+            assertThat(draft.runbookVersionId()).isNull();
+            assertThat(draft.hypotheses().getFirst().statement())
+                    .containsIgnoringCase(sample.getValue());
+            assertThat(draft.hypotheses().getFirst().evidenceRefs()).containsExactly(evidence.id());
+        }
+    }
+
+    @Test
+    void staleSignalsAndMissingPublishedRunbookFailClosed() {
+        var stale = new DiagnosisEvidence(UUID.randomUUID(), "prometheus", "service-health",
+                objectMapper.createObjectNode().put("db_pool_pending", 10)
+                        .put("acquire_timeout_count", 5),
+                "hash", Instant.parse("2026-09-19T00:00:00Z"), false);
+        var context = new DiagnosisContext(UUID.randomUUID(), 0, UUID.randomUUID(), List.of(stale),
+                UUID.randomUUID(), Instant.parse("2026-09-19T23:45:00Z"),
+                Instant.parse("2026-09-20T00:00:00Z"), "published-v1");
+        var staleDraft = engine.diagnose(context);
+        assertThat(staleDraft.runbookVersionId()).isNull();
+        assertThat(staleDraft.riskLevel()).isEqualTo(RiskLevel.R0);
+
+        var pending = evidence("db_pool_pending", 10);
+        var timeout = evidence("acquire_timeout_count", 5);
+        var retiredDraft = engine.diagnose(new DiagnosisContext(UUID.randomUUID(), 0,
+                UUID.randomUUID(), List.of(pending, timeout)));
+        assertThat(retiredDraft.runbookVersionId()).isNull();
+        assertThat(retiredDraft.hypotheses().getFirst().evidenceRefs())
+                .containsExactlyInAnyOrder(pending.id(), timeout.id());
+        assertThat(retiredDraft.missingEvidence()).contains("published recovery Runbook");
     }
 
     private DiagnosisEvidence evidence(String field, int value) {
