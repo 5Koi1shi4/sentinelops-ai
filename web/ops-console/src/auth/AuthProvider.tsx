@@ -5,9 +5,12 @@ import {
     useState,
     type ReactNode,
 } from "react";
-import { UserManager, WebStorageStateStore, type User } from "oidc-client-ts";
+import type { QueryClient } from "@tanstack/react-query";
+import { UserManager, type User } from "oidc-client-ts";
 
+import { queryClient as defaultQueryClient } from "../app/queryClient";
 import { AuthContext, type AuthUser, type PlatformRole } from "./authContext";
+import { createOidcUserManagerSettings } from "./authConfig";
 
 export type { AuthUser, PlatformRole } from "./authContext";
 
@@ -20,23 +23,21 @@ const roleNames = new Set<PlatformRole>([
 ]);
 
 function oidcManager(): UserManager | null {
-    const authority = import.meta.env.VITE_OIDC_ISSUER as string | undefined;
-    const clientId = import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined;
-    if (!authority || !clientId || typeof window === "undefined") {
+    if (typeof window === "undefined") {
         return null;
     }
-    return new UserManager({
-        authority,
-        client_id: clientId,
-        redirect_uri:
-            (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined) ??
-            `${window.location.origin}/auth/callback`,
-        post_logout_redirect_uri: window.location.origin,
-        response_type: "code",
-        scope: "openid profile email",
-        userStore: new WebStorageStateStore({ store: window.sessionStorage }),
-        automaticSilentRenew: true,
-    });
+    const settings = createOidcUserManagerSettings(
+        {
+            authority: import.meta.env.VITE_OIDC_ISSUER,
+            clientId: import.meta.env.VITE_OIDC_CLIENT_ID,
+            redirectUri: import.meta.env.VITE_OIDC_REDIRECT_URI,
+        },
+        {
+            origin: window.location.origin,
+            sessionStorage: window.sessionStorage,
+        },
+    );
+    return settings ? new UserManager(settings) : null;
 }
 
 function stringArray(value: unknown): string[] {
@@ -74,11 +75,14 @@ function mapUser(user: User | null): AuthUser | null {
 export function AuthProvider({
     children,
     user: suppliedUser,
+    queryClient: suppliedQueryClient,
 }: {
     children: ReactNode;
     user?: AuthUser | null;
+    queryClient?: QueryClient;
 }) {
     const manager = useMemo(() => oidcManager(), []);
+    const queryClient = suppliedQueryClient ?? defaultQueryClient;
     const [resolvedUser, setResolvedUser] = useState<AuthUser | null>(
         suppliedUser ?? null,
     );
@@ -101,9 +105,19 @@ export function AuthProvider({
         };
         const unload = () => refresh(null);
         const initialize = async () => {
+            const callbackParams = new URLSearchParams(window.location.search);
+            if (
+                window.location.pathname === "/" &&
+                callbackParams.has("state")
+            ) {
+                await manager.signoutRedirectCallback();
+                window.history.replaceState({}, document.title, "/incidents");
+                refresh(null);
+                return;
+            }
             if (
                 window.location.pathname === "/auth/callback" &&
-                new URLSearchParams(window.location.search).has("code")
+                (callbackParams.has("code") || callbackParams.has("error"))
             ) {
                 const callbackUser = await manager.signinRedirectCallback();
                 window.history.replaceState({}, document.title, "/incidents");
@@ -130,12 +144,13 @@ export function AuthProvider({
     }, [manager]);
 
     const signOut = useCallback(async () => {
+        queryClient.clear();
+        setResolvedUser(null);
         if (!manager) {
-            setResolvedUser(null);
             return;
         }
         await manager.signoutRedirect();
-    }, [manager]);
+    }, [manager, queryClient]);
 
     const user = suppliedUser !== undefined ? suppliedUser : resolvedUser;
     const loading = suppliedUser !== undefined ? false : isLoading;

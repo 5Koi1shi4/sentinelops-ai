@@ -46,6 +46,7 @@ services:
       SENTINELOPS_VALKEY_PORT: 6379
       SENTINELOPS_OIDC_JWK_SET_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/certs
       SENTINELOPS_OIDC_ISSUER: http://localhost:8081/realms/sentinelops
+      SENTINELOPS_ALLOWED_ORIGINS: http://localhost:4173,http://localhost:5173
       SENTINELOPS_DEMO_SERVICE_URL: http://demo-service:8082
     depends_on:
       postgres:
@@ -110,6 +111,8 @@ services:
         VITE_OIDC_ISSUER: http://localhost:8081/realms/sentinelops
         VITE_OIDC_CLIENT_ID: sentinelops-console
         VITE_OIDC_REDIRECT_URI: http://localhost:4173/auth/callback
+    environment:
+      OIDC_ORIGIN: http://localhost:8081
     depends_on:
       ops-api:
         condition: service_healthy

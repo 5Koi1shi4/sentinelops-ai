@@ -444,7 +444,7 @@ public class ApprovalApplicationService {
 
     private void authorizeApprover(CurrentPrincipal principal, UUID serviceId) {
         AuthorizationService.require(principal, AuthorizationService.Action.APPROVE, serviceId);
-        if (!principal.hasAnyRole(PlatformRole.SRE_APPROVER, PlatformRole.PLATFORM_ADMIN)
+        if (!principal.hasAnyRole(PlatformRole.SRE_APPROVER)
                 || !principal.canAccess(serviceId)) {
             throw problem(
                     HttpStatus.FORBIDDEN,

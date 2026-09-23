@@ -48,6 +48,23 @@ class PrincipalSynchronizationIT extends PostgresIntegrationTest {
     }
 
     @Test
+    void revokedRoleIsEnforcedOnTheNextRequestUsingAnOlderToken() throws Exception {
+        String subject = "revoked-" + UUID.randomUUID();
+        Instant oldIssue = Instant.now().minusSeconds(90);
+        Jwt oldToken = token(ISSUER, subject, oldIssue,
+                List.of("OBSERVER"), List.of(DEMO_SERVICE), "Former observer");
+        synchronizer.synchronize(oldToken);
+        synchronizer.synchronize(token(ISSUER, subject, oldIssue.plusSeconds(60),
+                List.of(), List.of(), "Former observer"));
+
+        var mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        mockMvc.perform(get("/api/v1/services").with(jwt().jwt(oldToken).authorities(
+                        new SimpleGrantedAuthority("SENTINELOPS_API_AUDIENCE"),
+                        new SimpleGrantedAuthority("ROLE_OBSERVER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void reconcilesOnlyTrustedClaimsAndRemovesRevokedServiceGrants() {
         String subject = "sync-" + UUID.randomUUID();
         UUID secondService = service();
@@ -101,17 +118,24 @@ class PrincipalSynchronizationIT extends PostgresIntegrationTest {
     }
 
     @Test
-    void equalIssueTimeCanRemoveButNeverRestoreAGrant() {
+    void equalIssueTimeCanRemoveButNeverRestoreAGrant() throws Exception {
         String subject = "equal-iat-" + UUID.randomUUID();
-        Instant issue = Instant.parse("2026-09-22T10:00:00Z");
-        UUID id = synchronizer.synchronize(token(ISSUER, subject, issue,
-                List.of("OBSERVER"), List.of(DEMO_SERVICE), "Observer"));
+        Instant issue = Instant.now().minusSeconds(60);
+        Jwt original = token(ISSUER, subject, issue,
+                List.of("OBSERVER"), List.of(DEMO_SERVICE), "Observer");
+        UUID id = synchronizer.synchronize(original);
         synchronizer.synchronize(token(ISSUER, subject, issue,
                 List.of("OBSERVER"), List.of(), "Observer"));
         assertThat(grants(id)).isEmpty();
         synchronizer.synchronize(token(ISSUER, subject, issue,
                 List.of("OBSERVER"), List.of(DEMO_SERVICE), "Old observer"));
         assertThat(grants(id)).isEmpty();
+
+        var mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        mockMvc.perform(get("/api/v1/services").with(jwt().jwt(original).authorities(
+                        new SimpleGrantedAuthority("SENTINELOPS_API_AUDIENCE"),
+                        new SimpleGrantedAuthority("ROLE_OBSERVER"))))
+                .andExpect(status().isForbidden());
     }
 
     private List<String> grants(UUID principalId) {

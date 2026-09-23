@@ -24,7 +24,11 @@ class EvalHttpIT extends PostgresIntegrationTest {
     @Autowired ObjectMapper mapper;
     @Autowired JdbcClient jdbc;
     MockMvc mvc;
-    @BeforeEach void setup() { mvc=MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build(); }
+    String subjectPrefix;
+    @BeforeEach void setup() {
+        mvc=MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        subjectPrefix="eval-http-"+UUID.randomUUID();
+    }
 
     @Test void adminCanRunReadAndReplayWhileUntrustedProviderOverrideIsRejected() throws Exception {
         String key=UUID.randomUUID().toString();
@@ -85,7 +89,8 @@ class EvalHttpIT extends PostgresIntegrationTest {
         org.assertj.core.api.Assertions.assertThat(jdbc.sql("select count(*) from audit_record").query(Long.class).single()).isEqualTo(auditsBefore);
     }
     private RequestPostProcessor actor(String role) {
-        return jwt().jwt(token->token.issuer("https://issuer.sentinelops.test").subject("eval-http")
+        return jwt().jwt(token->token.issuer("https://issuer.sentinelops.test")
+                .subject(subjectPrefix+"-"+role.toLowerCase(Locale.ROOT))
                 .claim("realm_access",Map.of("roles",List.of(role))))
                 .authorities(new SimpleGrantedAuthority(API_AUTHORITY),new SimpleGrantedAuthority("ROLE_"+role));
     }

@@ -29,7 +29,12 @@ public class PrincipalSynchronizationFilter extends OncePerRequestFilter {
         if (authentication instanceof JwtAuthenticationToken token && token.isAuthenticated()
                 && token.getAuthorities().stream().anyMatch(authority ->
                         authority.getAuthority().equals(SentinelJwtAuthenticationConverter.API_AUTHORITY))) {
-            synchronizer.synchronize(token.getToken());
+            var principalId = synchronizer.synchronize(token.getToken());
+            if (!synchronizer.hasCurrentGrants(token.getToken(), principalId)) {
+                SecurityContextHolder.clearContext();
+                response.sendError(HttpServletResponse.SC_FORBIDDEN);
+                return;
+            }
         }
         chain.doFilter(request, response);
     }

@@ -142,7 +142,7 @@ git commit -m "feat: harden inbound alert webhooks"
 - Produces: startup validation rejecting deterministic provider, Demo mode/users, wildcard origins, inline private keys, default passwords, HTTP OIDC issuer, and absent ticket-signing material under `production`.
 - Consumes: OIDC/service-scope model and approval rules from earlier plans.
 
-- [ ] **Step 1: Write failing startup and cross-role mutation tests**
+- [x] **Step 1: Write failing startup and cross-role mutation tests**
 
 ```java
 @ParameterizedTest
@@ -159,7 +159,7 @@ void productionRejectsUnsafeSetting(String property) {}
 @Test void revokedRoleIsEnforcedOnNextRequest() {}
 ```
 
-- [ ] **Step 2: Run security tests and observe failure**
+- [x] **Step 2: Run security tests and observe failure**
 
 Run:
 
@@ -170,21 +170,23 @@ npm --prefix .\web\ops-console run e2e -- security-boundaries.spec.ts
 
 Expected: FAIL because production validation/CSP/security scenarios are incomplete.
 
-- [ ] **Step 3: Enforce issuer, audience, origin, and claim rules**
+Backend startup, approval, JWT and stale-grant tests produced the expected red results before implementation. Browser E2E could not run in the red phase because Docker was unavailable; the later complete browser suite passed against the rebuilt Compose stack.
+
+- [x] **Step 3: Enforce issuer, audience, origin, and claim rules**
 
 Require `aud` contains `sentinelops-api`, issuer exactly matches configuration, token is not before/expired, and subject is nonblank. Configure exact CORS origins and methods; credentials remain disabled for bearer API requests. Do not accept roles from headers/query/body. Internal Executor audience and routes use a separate security chain.
 
-- [ ] **Step 4: Add production startup validation and safe browser headers**
+- [x] **Step 4: Add production startup validation and safe browser headers**
 
 Nginx headers include a nonce-free static CSP compatible with the Vite build (`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' <configured-oidc-origin>; frame-ancestors 'none'; base-uri 'self'; form-action 'self' <configured-oidc-origin>`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, and HSTS only on TLS production entry.
 
 OIDC uses Authorization Code + PKCE and exact redirect URIs. Store tokens in memory/session scope, not localStorage; logout clears Query cache and OIDC session state.
 
-- [ ] **Step 5: Complete the STRIDE threat model with implemented controls**
+- [x] **Step 5: Complete the STRIDE threat model with implemented controls**
 
 Document assets, trust boundaries, spoofing/tampering/repudiation/information disclosure/DoS/elevation threats, control owner, test name and residual risk. Include webhook replay, prompt injection, SSRF, self-approval, ticket theft, executor compromise, stale fencing token and Demo-mode exposure.
 
-- [ ] **Step 6: Verify backend and browser security**
+- [x] **Step 6: Verify backend and browser security**
 
 Run:
 
@@ -195,7 +197,7 @@ npm --prefix .\web\ops-console run e2e -- security-boundaries.spec.ts
 
 Expected: PASS; CSP has no wildcard/unsafe-eval, forged roles are ignored, and startup fails fast on every unsafe production fixture.
 
-- [ ] **Step 7: Commit security boundaries**
+- [x] **Step 7: Commit security boundaries**
 
 ```powershell
 git add apps/ops-api web/ops-console docs/threat-model docs/adr

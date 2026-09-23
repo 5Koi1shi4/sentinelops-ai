@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
 @Configuration(proxyBeanMethods = false)
-@Profile({"demo", "test"})
+@Profile("!production & (demo | test)")
 public class DemoEphemeralKeyConfiguration {
 
     @Bean

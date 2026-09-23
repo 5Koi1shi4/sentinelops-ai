@@ -18,10 +18,13 @@ public final class SentinelJwtAuthenticationConverter
     public static final String API_AUTHORITY = "SENTINELOPS_API_AUDIENCE";
 
     private final String apiAudience;
+    private final String executorAudience;
 
     public SentinelJwtAuthenticationConverter(
-            @Value("${sentinelops.security.audience}") String apiAudience) {
+            @Value("${sentinelops.security.audience}") String apiAudience,
+            @Value("${sentinelops.security.executor-audience}") String executorAudience) {
         this.apiAudience = apiAudience;
+        this.executorAudience = executorAudience;
     }
 
     @Override
@@ -36,7 +39,7 @@ public final class SentinelJwtAuthenticationConverter
         }
 
         if (hasRealmRole(jwt, "sentinelops_executor")
-                && jwt.getAudience().contains(apiAudience)) {
+                && jwt.getAudience().contains(executorAudience)) {
             authorities.add(new SimpleGrantedAuthority(EXECUTOR_AUTHORITY));
         }
         return new JwtAuthenticationToken(jwt, authorities, principal.subject());

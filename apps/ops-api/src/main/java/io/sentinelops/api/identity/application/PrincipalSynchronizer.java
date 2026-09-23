@@ -61,4 +61,11 @@ public class PrincipalSynchronizer {
                 : jwt.getIssuedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         return store.reconcile(jwt.getIssuer().toString(), subject, name, issuedAt, roles, services);
     }
+
+    public boolean hasCurrentGrants(Jwt jwt, UUID principalId) {
+        var principal = CurrentPrincipal.from(jwt);
+        Instant issuedAt = jwt.getIssuedAt() == null ? Instant.EPOCH
+                : jwt.getIssuedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        return store.grantsMatch(principalId, issuedAt, principal.roles(), principal.serviceIds());
+    }
 }

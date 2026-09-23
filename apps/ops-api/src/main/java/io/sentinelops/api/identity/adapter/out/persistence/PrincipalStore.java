@@ -5,6 +5,8 @@ import io.sentinelops.api.shared.id.UuidV7Generator;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -84,6 +86,42 @@ public class PrincipalStore {
         return row.id();
     }
 
+    /** Checks the persisted grant snapshot after reconciliation, so a superseded JWT cannot authorize a request. */
+    @Transactional(readOnly = true)
+    public boolean grantsMatch(UUID principalId, Instant issuedAt,
+            Set<PlatformRole> roles, Set<UUID> serviceIds) {
+        var rows = jdbc.sql("""
+                select p.claims_issued_at, g.role_name, g.service_id
+                from principal p left join role_grant g on g.principal_id=p.id
+                where p.id=:id
+                """).param("id", principalId)
+                .query((rs, ignored) -> new ClaimGrantRow(
+                        rs.getObject("claims_issued_at", OffsetDateTime.class),
+                        rs.getString("role_name"), rs.getObject("service_id", UUID.class)))
+                .list();
+        if (rows.isEmpty() || rows.getFirst().claimsIssuedAt() == null
+                || !issuedAt.equals(rows.getFirst().claimsIssuedAt().toInstant())) {
+            return false;
+        }
+        var persisted = new HashSet<GrantKey>();
+        for (var row : rows) {
+            if (row.roleName() != null) {
+                persisted.add(new GrantKey(row.roleName(), row.serviceId()));
+            }
+        }
+        var asserted = new HashSet<GrantKey>();
+        if (roles.contains(PlatformRole.PLATFORM_ADMIN)) {
+            asserted.add(new GrantKey("platform_admin", null));
+        }
+        for (var role : roles) {
+            if (role == PlatformRole.PLATFORM_ADMIN) continue;
+            for (var serviceId : serviceIds) {
+                asserted.add(new GrantKey(role.name().toLowerCase(Locale.ROOT), serviceId));
+            }
+        }
+        return persisted.equals(asserted);
+    }
+
     private void insertGrant(UUID principalId, PlatformRole role, UUID serviceId) {
         jdbc.sql("""
                 insert into role_grant(id,principal_id,role_name,service_id,granted_at)
@@ -95,4 +133,6 @@ public class PrincipalStore {
 
     private record PrincipalRow(UUID id, OffsetDateTime claimsIssuedAt) {}
     private record Grant(UUID id, String roleName, UUID serviceId) {}
+    private record ClaimGrantRow(OffsetDateTime claimsIssuedAt, String roleName, UUID serviceId) {}
+    private record GrantKey(String roleName, UUID serviceId) {}
 }

@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.JsonNode;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -61,8 +62,9 @@ public class ApprovalController {
             @PathVariable UUID requestId,
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
-            @Valid @RequestBody DecisionBody body,
+            @RequestBody JsonNode rawBody,
             @AuthenticationPrincipal Jwt jwt) {
+        var body = decisionBody(rawBody);
         var decided = approvals.decide(
                 requestId,
                 parseVersion(ifMatch),
@@ -86,6 +88,36 @@ public class ApprovalController {
                         ? principal.subject()
                         : displayName);
         return new RequestContext(principal, principalId);
+    }
+
+    private DecisionBody decisionBody(JsonNode body) {
+        if (body == null || !body.isObject()) {
+            throw new IllegalArgumentException("Approval decision body must be an object");
+        }
+        for (var field : body.properties()) {
+            if (!java.util.Set.of("decision", "comment", "proposalHash")
+                    .contains(field.getKey())) {
+                throw new IllegalArgumentException("Approval decision contains an unknown field");
+            }
+        }
+        String comment = null;
+        if (body.hasNonNull("comment")) {
+            if (!body.path("comment").isString()) {
+                throw new IllegalArgumentException("Approval comment must be a string");
+            }
+            comment = body.path("comment").stringValue();
+        }
+        return new DecisionBody(
+                requiredText(body, "decision"), comment,
+                requiredText(body, "proposalHash"));
+    }
+
+    private String requiredText(JsonNode body, String field) {
+        if (!body.hasNonNull(field) || !body.path(field).isString()
+                || body.path(field).stringValue().isBlank()) {
+            throw new IllegalArgumentException("Approval decision requires " + field);
+        }
+        return body.path(field).stringValue();
     }
 
     private long parseVersion(String ifMatch) {

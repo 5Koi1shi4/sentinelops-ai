@@ -58,9 +58,12 @@ sentinelops:
   security:
     issuer: ${SENTINELOPS_OIDC_ISSUER}
     audience: sentinelops-api
+    executor-audience: sentinelops-executor
+    allowed-origins: ${SENTINELOPS_ALLOWED_ORIGINS:}
   execution-ticket:
     issuer: urn:sentinelops:ops-api
     audience: sentinelops-executor
+    private-jwk-secret-ref: ${SENTINELOPS_EXECUTION_SIGNING_KEY_REF:}
   outbox:
     stream: sentinelops.executions
     relay-id: ${HOSTNAME:}

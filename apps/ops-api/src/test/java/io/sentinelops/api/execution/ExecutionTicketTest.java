@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.env.MockEnvironment;
 import tools.jackson.databind.ObjectMapper;
 
 class ExecutionTicketTest {
@@ -79,7 +80,10 @@ class ExecutionTicketTest {
         assertThat(verified.runbookChecksum()).isEqualTo("checksum-v1");
         assertThat(signer.publicJwks().path("keys").get(0).has("d")).isFalse();
         assertThat(new ConfiguredExecutionKeyConfiguration()
-                        .executionSigningKey(key.toJSONString())
+                        .executionSigningKey(new MockEnvironment()
+                                .withProperty("sentinelops.execution-ticket.private-jwk-secret-ref",
+                                        "env:TEST_EXECUTION_KEY")
+                                .withProperty("TEST_EXECUTION_KEY", key.toJSONString()))
                         .toPublicJWK())
                 .isEqualTo(key.toPublicJWK());
         assertThatThrownBy(() -> claims.requireRunbookChecksum("other"))
@@ -103,7 +107,10 @@ class ExecutionTicketTest {
                 .build();
 
         assertThatThrownBy(() -> new ConfiguredExecutionKeyConfiguration()
-                        .executionSigningKey(keyWithoutId.toJSONString()))
+                        .executionSigningKey(new MockEnvironment()
+                                .withProperty("sentinelops.execution-ticket.private-jwk-secret-ref",
+                                        "env:TEST_EXECUTION_KEY")
+                                .withProperty("TEST_EXECUTION_KEY", keyWithoutId.toJSONString())))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("kid");
         assertThatThrownBy(

@@ -296,12 +296,12 @@
       "optionalClientScopes": ["runbook:execute:checkout"],
       "protocolMappers": [
         {
-          "name": "sentinelops-api-audience",
+          "name": "sentinelops-executor-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "consentRequired": false,
           "config": {
-            "included.custom.audience": "sentinelops-api",
+            "included.custom.audience": "sentinelops-executor",
             "access.token.claim": "true",
             "introspection.token.claim": "true"
           }

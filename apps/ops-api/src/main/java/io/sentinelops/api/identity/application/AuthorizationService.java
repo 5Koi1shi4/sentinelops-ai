@@ -18,6 +18,10 @@ public final class AuthorizationService {
     public static void require(CurrentPrincipal principal, Action action, UUID serviceId) {
         Objects.requireNonNull(principal, "principal");
         Objects.requireNonNull(action, "action");
+        if (action == Action.APPROVE && !principal.roles().contains(PlatformRole.SRE_APPROVER)) {
+            throw new ApiProblemException(HttpStatus.FORBIDDEN, "access_denied",
+                    "The principal cannot approve changes for the service.");
+        }
         if (principal.roles().contains(PlatformRole.PLATFORM_ADMIN)) {
             return;
         }
