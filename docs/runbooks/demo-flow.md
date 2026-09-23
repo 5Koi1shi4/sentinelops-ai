@@ -10,7 +10,7 @@
 .\scripts\demo.ps1
 ```
 
-脚本会等待全部服务健康（最长 180 秒），再通过仅拥有 `demo:fault` scope 的机器身份激活 Checkout 连接池故障。Prometheus 每 2 秒抓取指标；故障持续 5 秒后，`SentinelOpsDemoCheckoutFault` 进入 firing，Alertmanager 将标准 webhook 发送给控制平面。
+脚本会等待全部服务健康（最长 180 秒），再通过仅拥有 `demo:fault` scope 的机器身份激活 Checkout 连接池故障。Prometheus 每 2 秒抓取指标；故障持续 5 秒后，`SentinelOpsDemoCheckoutFault` 进入 firing。Alertmanager 将标准 webhook 发送给私有网络内的 Demo 签名中继，再由中继向控制平面发送签名后的原始正文。签名协议与限额见 [Webhook 接入](webhook-ingestion.md)。
 
 ## 2. 值班人员诊断并提交审批
 

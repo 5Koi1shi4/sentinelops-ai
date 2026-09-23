@@ -44,6 +44,9 @@ spring:
       timeout: 2s
 
 sentinelops:
+  webhook:
+    source-refs: ${SENTINELOPS_WEBHOOK_SOURCE_REFS:}
+    nonce-cleanup-interval: PT1M
   evidence:
     mode: ${SENTINELOPS_EVIDENCE_MODE:fixture}
     prometheus:

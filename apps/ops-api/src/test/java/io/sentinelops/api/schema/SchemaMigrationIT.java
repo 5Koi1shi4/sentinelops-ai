@@ -47,7 +47,8 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "idempotency_record",
                 "diagnosis_run_evidence",
                 "verification_cycle",
-                "verification_attempt");
+                "verification_attempt",
+                "webhook_replay_nonce");
 
         var indexes = jdbc.sql("""
                         select indexname from pg_indexes where schemaname = 'public'
@@ -65,7 +66,8 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 "verification_cycle_reclaim_idx",
                 "verification_cycle_incident_running_uk",
                 "verification_attempt_cycle_time_idx",
-                "audit_record_cursor_idx");
+                "audit_record_cursor_idx",
+                "webhook_replay_nonce_expiry_idx");
 
         var currentVersion = jdbc.sql("""
                         select version
@@ -77,7 +79,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("16");
+        assertThat(currentVersion).isEqualTo("17");
 
         var auditColumns = jdbc.sql("""
                         select column_name

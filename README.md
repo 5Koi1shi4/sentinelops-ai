@@ -21,11 +21,11 @@ SentinelOps AI 是一个面向单组织内部使用的事故响应平台。Stage
 | `approver-demo` | `approver-demo` | `OBSERVER`, `SRE_APPROVER` | 独立批准 R1 变更 |
 | `platform-admin-demo` | `platform-admin-demo` | `PLATFORM_ADMIN` | 查看和运行 AI Eval 治理 |
 
-完整演示步骤见 [Demo 运维手册](docs/runbooks/demo-flow.md)。
+完整演示步骤见 [Demo 运维手册](docs/runbooks/demo-flow.md)。Alertmanager 经仅在私有网络运行的 Demo 签名中继进入控制平面；来源密钥、签名与重放规则见 [Webhook 接入](docs/runbooks/webhook-ingestion.md)。
 
 Demo 现从 Prometheus 采集错误率、延迟及连接池等待指标，并从 Loki 采集故障日志；OpenTelemetry Collector 负责日志转发。诊断默认仍使用可重复的确定性模型，固定证据仅供显式 fixture 模式与测试使用。OpenAI-compatible 和 Ollama 可按[模型配置](docs/runbooks/model-providers.md)单独启用与烟测。
 
-Stage 2A 的实施与验收记录见 [实施进度](docs/runbooks/stage-2a-progress.md)，模型边界和知识检索决策见 [ADR 0001](docs/adr/0001-ai-provider-and-tool-boundary.md) 与 [ADR 0002](docs/adr/0002-hybrid-knowledge-search.md)。
+Stage 2A 的实施与验收记录见 [实施进度](docs/runbooks/stage-2a-progress.md)，Stage 2B 进度见 [生产加固进度](docs/runbooks/stage-2b-progress.md)。模型边界和知识检索决策见 [ADR 0001](docs/adr/0001-ai-provider-and-tool-boundary.md) 与 [ADR 0002](docs/adr/0002-hybrid-knowledge-search.md)。
 
 > 这些密码、客户端密钥和数据库默认值只用于隔离的本地 Demo。不要把它们复用到测试共享环境或生产环境。
 

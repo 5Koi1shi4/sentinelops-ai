@@ -1,41 +1,66 @@
 package io.sentinelops.api.incident.adapter.in.web;
 
+import io.sentinelops.api.incident.adapter.in.webhook.BoundedWebhookRequest;
+import io.sentinelops.api.incident.adapter.in.webhook.WebhookRateLimiter;
+import io.sentinelops.api.incident.adapter.in.webhook.WebhookReplayGuard;
+import io.sentinelops.api.incident.adapter.in.webhook.WebhookSignatureVerifier;
 import io.sentinelops.api.incident.application.AlertEnvelope;
 import io.sentinelops.api.incident.application.IncidentApplicationService;
 import io.sentinelops.api.incident.application.IncidentSummary;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api/v1/integrations/alertmanager")
 public class AlertmanagerWebhookController {
 
-    private static final String DEFAULT_SOURCE = "alertmanager";
-
     private final IncidentApplicationService incidents;
     private final AlertmanagerPayloadValidator validator;
+    private final BoundedWebhookRequest bounded;
+    private final WebhookSignatureVerifier signatures;
+    private final WebhookReplayGuard replay;
+    private final WebhookRateLimiter rates;
+    private final ObjectMapper mapper;
 
     public AlertmanagerWebhookController(
-            IncidentApplicationService incidents, AlertmanagerPayloadValidator validator) {
+            IncidentApplicationService incidents, AlertmanagerPayloadValidator validator,
+            BoundedWebhookRequest bounded, WebhookSignatureVerifier signatures,
+            WebhookReplayGuard replay, WebhookRateLimiter rates, ObjectMapper mapper) {
         this.incidents = incidents;
         this.validator = validator;
+        this.bounded = bounded;
+        this.signatures = signatures;
+        this.replay = replay;
+        this.rates = rates;
+        this.mapper = mapper;
     }
 
     @PostMapping("/webhook")
     ResponseEntity<IncidentSummary> ingest(
-            @RequestHeader(value = "X-SentinelOps-Source", defaultValue = DEFAULT_SOURCE)
-                    String source,
+            HttpServletRequest request,
+            @RequestHeader(value = "X-Sentinel-Source", required = false) String source,
+            @RequestHeader(value = "X-Sentinel-Timestamp", required = false) String timestamp,
+            @RequestHeader(value = "X-Sentinel-Nonce", required = false) String nonce,
+            @RequestHeader(value = "X-Sentinel-Signature", required = false) String signature,
             @RequestHeader(value = "X-SentinelOps-Event-Id", required = false)
-                    String sourceEventId,
-            @RequestBody JsonNode payload) {
+                    String sourceEventId) {
+        byte[] body = bounded.read(request);
+        signatures.verify(source, timestamp, nonce, signature, body);
+        replay.claim(source, nonce);
+        rates.acquire(source);
+        JsonNode payload = bounded.parse(body, request.getContentType(), mapper);
         validator.validate(payload);
+        if (sourceEventId != null && sourceEventId.length() > 512) {
+            throw new IllegalArgumentException("Webhook event ID is too long");
+        }
         var commonLabels = payload.path("commonLabels");
         var commonAnnotations = payload.path("commonAnnotations");
         var firstAlert = firstAlert(payload);

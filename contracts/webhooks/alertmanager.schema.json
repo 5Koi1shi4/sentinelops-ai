@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sentinelops.local/contracts/webhooks/alertmanager.schema.json",
   "title": "SentinelOps Alertmanager v4 webhook",
+  "description": "Signed raw JSON body: X-Sentinel-Source, X-Sentinel-Timestamp, X-Sentinel-Nonce and X-Sentinel-Signature. The request body is limited to 1 MiB; label values to 4096 UTF-8 bytes; all annotation keys and values combined to 64 KiB.",
   "type": "object",
   "required": ["version", "status", "commonLabels", "alerts"],
   "properties": {
@@ -62,7 +63,7 @@
     "alerts": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 256,
+      "maxItems": 200,
       "items": {
         "$ref": "#/$defs/alert"
       }
@@ -72,10 +73,10 @@
   "$defs": {
     "labels": {
       "type": "object",
-      "maxProperties": 128,
+      "maxProperties": 100,
       "additionalProperties": {
         "type": "string",
-        "maxLength": 2048
+        "maxLength": 4096
       }
     },
     "annotations": {

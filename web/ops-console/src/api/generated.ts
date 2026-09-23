@@ -384,8 +384,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Ingest a validated Alertmanager v4 webhook
-         * @description Requires a bearer token with the sentinelops-api audience outside the Demo profile. The isolated Demo profile permits this private-network webhook without a user role.
+         * Ingest a signed Alertmanager v4 webhook
+         * @description HMAC-SHA256 covers timestamp + newline + nonce + newline + exact request bytes. Timestamp skew must not exceed five minutes. Nonce is single-use within the durable replay window. Requests are capped at one MiB, 200 alerts, 100 labels per map, 4096 UTF-8 bytes per label value and 64 KiB of annotations. The Demo Alertmanager sends through a private signing relay.
          */
         post: operations["receiveAlertmanagerWebhook"];
         delete?: never;
@@ -1757,8 +1757,13 @@ export interface operations {
     receiveAlertmanagerWebhook: {
         parameters: {
             query?: never;
-            header?: {
-                "X-SentinelOps-Source"?: string;
+            header: {
+                "X-Sentinel-Source": string;
+                /** @description Unix epoch seconds. */
+                "X-Sentinel-Timestamp": string;
+                /** @description 128-bit random nonce encoded as 32 hexadecimal characters. */
+                "X-Sentinel-Nonce": string;
+                "X-Sentinel-Signature": string;
                 "X-SentinelOps-Event-Id"?: string;
             };
             path?: never;
@@ -1784,9 +1789,44 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            404: components["responses"]["NotFound"];
+            /** @description Signature, source or timestamp is invalid. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
             409: components["responses"]["Conflict"];
+            /** @description Request body or alert count exceeds its limit. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description JSON content type is required. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Per-source webhook rate limit exceeded. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
         };
     };
     listAuditRecords: {

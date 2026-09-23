@@ -11,6 +11,6 @@ route:
 receivers:
   - name: sentinelops-ops-api
     webhook_configs:
-      - url: http://ops-api:8080/api/v1/integrations/alertmanager/webhook
+      - url: http://demo-alert-relay:8082/internal/demo/alertmanager-relay
         send_resolved: true
         max_alerts: 20

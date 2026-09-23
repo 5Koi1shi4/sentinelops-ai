@@ -16,7 +16,11 @@ import org.springframework.security.web.SecurityFilterChain;
 public class DemoServiceSecurityConfig {
 
     @Bean
-    SecurityFilterChain demoServiceSecurity(HttpSecurity http) throws Exception {
+    SecurityFilterChain demoServiceSecurity(
+            HttpSecurity http,
+            @Value("${sentinelops.demo-mode:false}") boolean demoMode,
+            @Value("${sentinelops.demo-alert-relay-mode:false}") boolean relayMode)
+            throws Exception {
         http.csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"));
         http.sessionManagement(
                 sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
@@ -28,6 +32,9 @@ public class DemoServiceSecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/checkout")
                 .permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/demo/alertmanager-relay")
+                .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        demoMode && relayMode))
                 .requestMatchers(
                         HttpMethod.POST, "/internal/demo/faults/connection-pool")
                 .hasAuthority("SCOPE_demo:fault")

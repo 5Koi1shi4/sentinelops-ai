@@ -18,15 +18,19 @@ import io.sentinelops.api.incident.application.IncidentApplicationService;
 import io.sentinelops.api.incident.application.IncidentSummary;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.support.PostgresIntegrationTest;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +38,8 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -42,6 +48,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 class AlertIngestionIT extends PostgresIntegrationTest {
+    private static final String WEBHOOK_SECRET = "ingestion-test-webhook-key-longer-than-32-bytes";
+
+    @DynamicPropertySource
+    static void webhookProperties(DynamicPropertyRegistry registry) {
+        registry.add("sentinelops.webhook.source-refs",
+                () -> "test-alertmanager=env:SENTINELOPS_WEBHOOK_INGESTION_SECRET");
+        registry.add("SENTINELOPS_WEBHOOK_INGESTION_SECRET", () -> WEBHOOK_SECRET);
+    }
+
 
     @Autowired private IncidentApplicationService incidents;
     @Autowired private JdbcClient jdbc;
@@ -335,12 +350,9 @@ class AlertIngestionIT extends PostgresIntegrationTest {
                 .put("service_key", serviceKey)
                 .put("severity", "sev1");
 
-        mockMvc.perform(post("/api/v1/integrations/alertmanager/webhook")
+        mockMvc.perform(signedWebhook(objectMapper.writeValueAsBytes(payload))
                         .with(observer(serviceId(serviceKey)))
-                        .header("X-SentinelOps-Source", "demo-alertmanager")
-                        .header("X-SentinelOps-Event-Id", "webhook-delivery-a")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsBytes(payload)))
+                        .header("X-SentinelOps-Event-Id", "webhook-delivery-a"))
                 .andExpect(status().isAccepted())
                 .andExpect(header().string("Location", org.hamcrest.Matchers.startsWith("/api/v1/incidents/")))
                 .andExpect(header().string("ETag", "\"0\""))
@@ -360,10 +372,8 @@ class AlertIngestionIT extends PostgresIntegrationTest {
                 .put("incident_fingerprint", "invalid-empty-alerts");
         payload.putArray("alerts");
 
-        mockMvc.perform(post("/api/v1/integrations/alertmanager/webhook")
-                        .with(observer(serviceId(serviceKey)))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsBytes(payload)))
+        mockMvc.perform(signedWebhook(objectMapper.writeValueAsBytes(payload))
+                        .with(observer(serviceId(serviceKey))))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errorCode").value("invalid_request"))
@@ -603,6 +613,21 @@ class AlertIngestionIT extends PostgresIntegrationTest {
     private JsonNode responseJson(org.springframework.test.web.servlet.ResultActions action)
             throws Exception {
         return objectMapper.readTree(action.andReturn().getResponse().getContentAsByteArray());
+    }
+
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder signedWebhook(
+            byte[] body) throws Exception {
+        String timestamp = Long.toString(Instant.now().getEpochSecond());
+        String nonce = UUID.randomUUID().toString().replace("-", "");
+        var mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(WEBHOOK_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        mac.update((timestamp + "\n" + nonce + "\n").getBytes(StandardCharsets.UTF_8));
+        return post("/api/v1/integrations/alertmanager/webhook")
+                .header("X-Sentinel-Source", "test-alertmanager")
+                .header("X-Sentinel-Timestamp", timestamp)
+                .header("X-Sentinel-Nonce", nonce)
+                .header("X-Sentinel-Signature", "v1=" + HexFormat.of().formatHex(mac.doFinal(body)))
+                .contentType(MediaType.APPLICATION_JSON).content(body);
     }
 
     private RequestPostProcessor observer(UUID serviceId) {

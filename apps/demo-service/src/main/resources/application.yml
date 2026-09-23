@@ -12,6 +12,9 @@ server:
 
 sentinelops:
   demo-mode: ${SENTINELOPS_DEMO_MODE:false}
+  demo-alert-relay-mode: ${SENTINELOPS_DEMO_ALERT_RELAY_MODE:false}
+  demo-alert-relay-url: ${SENTINELOPS_DEMO_ALERT_RELAY_URL:}
+  demo-alert-relay-secret: ${SENTINELOPS_WEBHOOK_DEMO_SECRET:}
   security:
     issuer: ${SENTINELOPS_DEMO_ISSUER:http://localhost:8081/realms/sentinelops}
     audience: demo-service

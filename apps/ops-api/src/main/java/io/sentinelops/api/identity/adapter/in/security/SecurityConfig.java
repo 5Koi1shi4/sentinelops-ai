@@ -6,8 +6,6 @@ import static io.sentinelops.api.identity.adapter.in.security.SentinelJwtAuthent
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -28,20 +26,16 @@ public class SecurityConfig {
     SecurityFilterChain apiSecurity(
             HttpSecurity http,
             SentinelJwtAuthenticationConverter jwtConverter,
-            PrincipalSynchronizer principalSynchronizer,
-            Environment environment)
+            PrincipalSynchronizer principalSynchronizer)
             throws Exception {
         http.csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"));
         http.sessionManagement(
                 sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
-            if (environment.acceptsProfiles(Profiles.of("demo"))) {
-                authorize.requestMatchers(
-                                HttpMethod.POST,
-                                "/api/v1/integrations/alertmanager/webhook")
-                        .permitAll();
-            }
+            authorize.requestMatchers(HttpMethod.POST,
+                            "/api/v1/integrations/alertmanager/webhook")
+                    .permitAll();
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/diagnosis-runs")
                     .hasAnyRole("ON_CALL_OPERATOR", "PLATFORM_ADMIN");
             authorize.requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/approval-requests")

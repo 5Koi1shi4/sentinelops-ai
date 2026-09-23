@@ -743,17 +743,41 @@ paths:
     post:
       operationId: receiveAlertmanagerWebhook
       tags: [Integrations]
-      summary: Ingest a validated Alertmanager v4 webhook
+      summary: Ingest a signed Alertmanager v4 webhook
       description: >-
-        Requires a bearer token with the sentinelops-api audience outside the Demo
-        profile. The isolated Demo profile permits this private-network webhook
-        without a user role.
+        HMAC-SHA256 covers timestamp + newline + nonce + newline + exact request
+        bytes. Timestamp skew must not exceed five minutes. Nonce is single-use
+        within the durable replay window. Requests are capped at one MiB, 200
+        alerts, 100 labels per map, 4096 UTF-8 bytes per label value and 64 KiB
+        of annotations. The Demo Alertmanager sends through a private signing relay.
+      security: []
       parameters:
-        - name: X-SentinelOps-Source
+        - name: X-Sentinel-Source
           in: header
+          required: true
           schema:
             type: string
-            default: alertmanager
+            pattern: '^[a-z][a-z0-9-]{0,63}$'
+        - name: X-Sentinel-Timestamp
+          in: header
+          required: true
+          description: Unix epoch seconds.
+          schema:
+            type: string
+            pattern: '^[0-9]{10,11}$'
+        - name: X-Sentinel-Nonce
+          in: header
+          required: true
+          description: 128-bit random nonce encoded as 32 hexadecimal characters.
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{32}$'
+        - name: X-Sentinel-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^v1=[a-fA-F0-9]{64}$'
         - name: X-SentinelOps-Event-Id
           in: header
           schema:
@@ -782,11 +806,35 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
+          description: Signature, source or timestamp is invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          description: Request body or alert count exceeds its limit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "415":
+          description: JSON content type is required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          description: Per-source webhook rate limit exceeded.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
 
   /audit-records:
     get:

@@ -184,4 +184,4 @@ Demo Compose 现在将结构化服务日志经 OpenTelemetry Collector 送入 Lo
 
 ## 下一实施任务
 
-Stage 2A 本地发布门禁已通过。继续 Stage 2B Task 1：入站 Webhook 的签名、请求边界、速率与重放保护。生产就绪还取决于 Stage 2B 的安全、故障和部署验收。
+Stage 2A 本地发布门禁已通过。Stage 2B Task 1 的签名、请求边界、速率与重放保护已实施并通过闭环回归；记录见 [Stage 2B 进度](stage-2b-progress.md)。下一项为 Task 2 的生产身份、密钥与浏览器边界。生产就绪仍取决于 Stage 2B 的其余安全、故障和部署验收。

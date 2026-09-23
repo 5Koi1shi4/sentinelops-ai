@@ -63,6 +63,32 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
 
+  demo-alert-relay:
+    build:
+      context: ../..
+      dockerfile: apps/demo-service/Dockerfile
+    environment:
+      SENTINELOPS_DEMO_MODE: "true"
+      SENTINELOPS_DEMO_ALERT_RELAY_MODE: "true"
+      SENTINELOPS_DEMO_ALERT_RELAY_URL: http://ops-api:8080/api/v1/integrations/alertmanager/webhook
+      SENTINELOPS_WEBHOOK_DEMO_SECRET: ${SENTINELOPS_WEBHOOK_DEMO_SECRET:-demo-only-placeholder-change-me-before-prod}
+    networks: [control-plane]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8082/actuator/health/readiness | grep -q '\"status\":\"UP\"'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
   prometheus:
     image: prom/prometheus:v3.13.3
     command:
@@ -150,6 +176,8 @@ services:
   ops-api:
     environment:
       SPRING_PROFILES_ACTIVE: demo
+      SENTINELOPS_WEBHOOK_SOURCE_REFS: demo-alertmanager=env:SENTINELOPS_WEBHOOK_DEMO_SECRET
+      SENTINELOPS_WEBHOOK_DEMO_SECRET: ${SENTINELOPS_WEBHOOK_DEMO_SECRET:-demo-only-placeholder-change-me-before-prod}
       SENTINELOPS_EVIDENCE_MODE: real
       SENTINELOPS_PROMETHEUS_URL: http://prometheus:9090
       SENTINELOPS_LOKI_URL: http://loki:3100

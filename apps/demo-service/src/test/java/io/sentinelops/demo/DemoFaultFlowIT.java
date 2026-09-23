@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import io.sentinelops.demo.alert.DemoAlertRelayController;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,7 @@ class DemoFaultFlowIT {
     @Test
     void usesTheDedicatedDemoPortByDefault() {
         assertThat(environment.getProperty("server.port")).isEqualTo("8082");
+        assertThat(context.getBeanNamesForType(DemoAlertRelayController.class)).isEmpty();
     }
 
     @Test

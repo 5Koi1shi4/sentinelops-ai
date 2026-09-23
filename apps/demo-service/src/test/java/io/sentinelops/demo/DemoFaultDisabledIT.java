@@ -4,7 +4,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import io.sentinelops.demo.alert.DemoAlertRelayController;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +38,7 @@ class DemoFaultDisabledIT {
 
     @Test
     void faultEndpointDoesNotExistOutsideDemoMode() throws Exception {
+        assertThat(context.getBeanNamesForType(DemoAlertRelayController.class)).isEmpty();
         mockMvc.perform(post("/internal/demo/faults/connection-pool")
                         .with(jwt()
                                 .authorities(new SimpleGrantedAuthority("SCOPE_demo:fault"))

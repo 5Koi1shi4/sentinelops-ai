@@ -49,7 +49,7 @@
 - Produces: a Demo-only private-network signing relay because Alertmanager does not natively calculate per-request timestamped HMAC headers; this relay is absent from production.
 - Consumes: source-specific secret reference resolved by runtime secret provider; secret value never enters configuration endpoint or audit.
 
-- [ ] **Step 1: Write failing security tests before changing the controller**
+- [x] **Step 1: Write failing security tests before changing the controller**
 
 ```java
 @ParameterizedTest
@@ -74,7 +74,7 @@ static Stream<Arguments> invalidRequests() {
 
 Fuzz test randomly varies nesting, missing fields, Unicode, nulls and label counts for 2,000 generated payloads; every case must produce a bounded 2xx/4xx response without 500, OutOfMemoryError, stack trace body or persisted partial incident.
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 Run:
 
@@ -84,7 +84,7 @@ Run:
 
 Expected: FAIL because the Stage 1 Demo webhook allows unsigned requests.
 
-- [ ] **Step 3: Add replay nonce storage and bounded request parsing**
+- [x] **Step 3: Add replay nonce storage and bounded request parsing**
 
 ```sql
 create table webhook_replay_nonce (
@@ -99,13 +99,13 @@ create index webhook_replay_nonce_expiry_idx on webhook_replay_nonce(expires_at)
 
 Read at most 1 MiB from the servlet input stream, verify signature over exact raw bytes, then bind JSON with a maximum of 200 alerts, 100 labels per alert, 4 KiB per label value and 64 KiB total annotations. Persist only SHA-256 nonce hashes. A scheduled cleanup deletes expired nonce rows in batches of 1,000 using a short transaction.
 
-- [ ] **Step 4: Implement signature, time and rate checks in fixed order**
+- [x] **Step 4: Implement signature, time and rate checks in fixed order**
 
 Order: body cap → known source → timestamp parse/skew ≤ 5 minutes → nonce syntax → HMAC constant-time compare → nonce insert → token bucket → JSON bind/validation → ingestion. Use Resilience4j `RateLimiterRegistry` keyed by source with a configured 60 requests/minute and burst 20 for the initial production policy. Return `Retry-After` on 429.
 
 `DemoAlertRelayController` is registered only when Demo mode is true and is reachable only on the private Alertmanager/Demo network. It reads at most 1 MiB, generates epoch-second timestamp plus a cryptographically random 128-bit nonce, signs the unmodified raw body as source `demo-alertmanager`, forwards once to ops-api, and returns a non-2xx response so Alertmanager owns retry. Alertmanager targets this relay; Compose injects the same Demo-only secret into relay and ops-api. Production contains neither the relay route nor its secret and fails startup if any configured production source lacks its secret reference.
 
-- [ ] **Step 5: Verify no partial persistence and bounded behavior**
+- [x] **Step 5: Verify no partial persistence and bounded behavior**
 
 Run:
 
@@ -115,7 +115,7 @@ Run:
 
 Expected: PASS; a valid duplicate Alertmanager event is idempotent, while replaying the same nonce is rejected before incident mutation.
 
-- [ ] **Step 6: Commit webhook hardening**
+- [x] **Step 6: Commit webhook hardening**
 
 ```powershell
 git add apps/ops-api apps/demo-service deploy/observability/alertmanager.yml deploy/compose/compose.demo.yml
