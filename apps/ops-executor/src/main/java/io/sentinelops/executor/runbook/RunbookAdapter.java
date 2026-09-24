@@ -9,4 +9,10 @@ public interface RunbookAdapter {
     Set<String> supportedOperations();
 
     ExecutionStepResult execute(AuthorizedRunbookStep step, IdempotencyContext context);
+
+    default ExecutionStepResult execute(
+            AuthorizedRunbookStep step, IdempotencyContext context, Runnable beforeTransport) {
+        beforeTransport.run();
+        return execute(step, context);
+    }
 }

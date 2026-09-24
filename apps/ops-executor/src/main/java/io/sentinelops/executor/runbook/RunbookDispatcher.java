@@ -26,6 +26,11 @@ public class RunbookDispatcher {
 
     public ExecutionStepResult dispatch(
             AuthorizedRunbookStep step, IdempotencyContext context) {
+        return dispatch(step, context, () -> {});
+    }
+
+    public ExecutionStepResult dispatch(
+            AuthorizedRunbookStep step, IdempotencyContext context, Runnable beforeTransport) {
         var adapter = adapters.get(step.adapterId());
         if (adapter == null) {
             throw new UnsupportedRunbookStepException(
@@ -35,6 +40,6 @@ public class RunbookDispatcher {
             throw new UnsupportedRunbookStepException(
                     "Unsupported Runbook operation for adapter " + step.adapterId());
         }
-        return adapter.execute(step, context);
+        return adapter.execute(step, context, beforeTransport);
     }
 }

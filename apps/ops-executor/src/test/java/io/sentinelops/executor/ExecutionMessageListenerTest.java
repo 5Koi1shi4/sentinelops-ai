@@ -11,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
 
 import io.sentinelops.executor.controlplane.ControlPlaneClient;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.ClaimedExecution;
@@ -30,6 +31,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -52,6 +54,16 @@ class ExecutionMessageListenerTest {
         when(adapter.supportedOperations()).thenReturn(Set.of("recover_connection_pool"));
         when(leaseHeartbeat.start(any(), any(), any(String.class))).thenReturn(activeLease);
         when(activeLease.ticketForResult()).thenReturn("signed-ticket");
+        doAnswer(invocation -> {
+            Consumer<String> action = invocation.getArgument(0);
+            action.accept("signed-ticket");
+            return null;
+        }).when(activeLease).withCurrentTicket(any());
+        when(adapter.execute(any(), any(), any(Runnable.class))).thenAnswer(invocation -> {
+            invocation.getArgument(2, Runnable.class).run();
+            return ExecutionStepResult.succeeded(
+                    "1.0.0", "request-hash", Map.of("changed", true));
+        });
         listener = new ExecutionMessageListener(
                 controlPlane,
                 verifier,
@@ -81,12 +93,12 @@ class ExecutionMessageListenerTest {
         listener.onMessage(firstDelivery);
         listener.onMessage(duplicateDelivery);
 
-        verify(adapter, times(1)).execute(any(), any());
+        verify(adapter, times(1)).execute(any(), any(), any(Runnable.class));
         verify(controlPlane, times(2)).claim(any(), any());
         verify(controlPlane, times(1)).complete(any(), any(), any(), any());
         var ordered = inOrder(leaseHeartbeat, adapter, activeLease, controlPlane);
         ordered.verify(leaseHeartbeat).start(eq(firstDelivery), eq(claim), any(String.class));
-        ordered.verify(adapter).execute(any(), any());
+        ordered.verify(adapter).execute(any(), any(), any(Runnable.class));
         ordered.verify(activeLease).ticketForResult();
         ordered.verify(controlPlane).complete(any(), any(), any(), any());
         ordered.verify(activeLease).close();
@@ -117,7 +129,7 @@ class ExecutionMessageListenerTest {
         assertThat(keys.getAllValues())
                 .allMatch(key -> key.startsWith(message.recordId() + ":claim:"))
                 .doesNotHaveDuplicates();
-        verify(adapter, times(1)).execute(any(), any());
+        verify(adapter, times(1)).execute(any(), any(), any(Runnable.class));
     }
 
     @Test
@@ -133,7 +145,7 @@ class ExecutionMessageListenerTest {
         assertThatThrownBy(() -> listener.onMessage(message))
                 .isInstanceOf(InvalidExecutionTicket.class);
 
-        verify(adapter, times(0)).execute(any(), any());
+        verify(adapter, times(0)).execute(any(), any(), any(Runnable.class));
         verifyNoInteractions(acknowledger);
     }
 
@@ -200,6 +212,27 @@ class ExecutionMessageListenerTest {
 
         verify(controlPlane, never()).complete(any(), any(), any(), any());
         verify(activeLease).close();
+        verifyNoInteractions(acknowledger);
+    }
+
+    @Test
+    void expiredTicketBeforeStepPreparationPreventsDispatch() {
+        UUID executionId = UUID.randomUUID();
+        var message = new ExecutionMessage("1710000000011-0", UUID.randomUUID(), executionId);
+        var claim = new ClaimedExecution(
+                executionId, 1, Instant.now().plusSeconds(30), "signed-ticket");
+        when(controlPlane.claim(eq(executionId), any(String.class))).thenReturn(claim);
+        when(verifier.verify("signed-ticket", executionId))
+                .thenReturn(authorizedStep(executionId))
+                .thenThrow(new InvalidExecutionTicket("Execution ticket expired"));
+
+        assertThatThrownBy(() -> listener.onMessage(message))
+                .isInstanceOf(InvalidExecutionTicket.class);
+
+        verify(adapter, never()).execute(any(), any(), any(Runnable.class));
+        verify(controlPlane, never()).recordPhase(any(), any(),
+                org.mockito.ArgumentMatchers.anyLong(), any(),
+                org.mockito.ArgumentMatchers.anyInt(), any(), any());
         verifyNoInteractions(acknowledger);
     }
 

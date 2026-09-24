@@ -385,8 +385,11 @@ Redis 只是唤醒通道。消息允许重复或延迟，所有最终判断由 P
 | --- | --- | --- |
 | POST | `/internal/v1/executions/{id}:claim` | 原子 claim 并获取短期签名票据 |
 | POST | `/internal/v1/executions/{id}:heartbeat` | 续租，要求当前 fencing token |
+| POST | `/internal/v1/executions/{id}:attempt-events` | 只追加记录当前 owner 的 `prepared`、`dispatched`、`unknown_after_dispatch` 阶段；后者对无重放保证的步骤立即升级人工 |
 | POST | `/internal/v1/executions/{id}:complete` | 回报脱敏结果和步骤证据 |
 | POST | `/internal/v1/executions/{id}:fail` | 回报失败分类，不由 Executor 决定事故终态 |
+
+Executor 的正式结果回报必须先有对应尝试的阶段记录；控制平面在同一事务追加 `acknowledged` 或 `failed_before_dispatch` 终态。租约为 30 秒，Executor 每 10 秒续租；两次连续暂时性续租失败后停止新的分发，票据过期不能开始新步骤。只有经目标契约验证同时具备稳定幂等键和 fencing 的操作可以在已分发但结果未知后重放。当前只有目标为 `demo-checkout` 的隔离 Demo `demo-http/recover_connection_pool` 满足此条件；新增生产适配器须逐项证明后才能加入重放白名单。
 
 ### 12.3 通用语义
 

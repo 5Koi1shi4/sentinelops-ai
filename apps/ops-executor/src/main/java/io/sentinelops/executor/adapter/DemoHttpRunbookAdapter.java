@@ -81,24 +81,34 @@ public final class DemoHttpRunbookAdapter implements RunbookAdapter {
     @Override
     public ExecutionStepResult execute(
             AuthorizedRunbookStep step, IdempotencyContext context) {
+        return execute(step, context, () -> {});
+    }
+
+    @Override
+    public ExecutionStepResult execute(
+            AuthorizedRunbookStep step,
+            IdempotencyContext context,
+            Runnable beforeTransport) {
         validate(step, context);
+        Objects.requireNonNull(beforeTransport, "beforeTransport");
         String requestHash = sha256(
                 ADAPTER_VERSION + '|' + targetAlias + '|' + OPERATION + "|replicas=1");
         try {
-            var response = client
+            String accessToken = tokens.accessToken(audience, scope);
+            var request = client
                     .post()
                     .uri(RECOVERY_PATH)
                     .headers(headers -> {
-                        headers.setBearerAuth(tokens.accessToken(audience, scope));
+                        headers.setBearerAuth(accessToken);
                         headers.set("Idempotency-Key", context.key());
                         headers.set(
                                 "X-SentinelOps-Fencing-Token",
                                 Long.toString(context.fencingToken()));
                     })
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("replicas", 1))
-                    .retrieve()
-                    .toEntity(RecoveryResponse.class);
+                    .body(Map.of("replicas", 1));
+            beforeTransport.run();
+            var response = request.retrieve().toEntity(RecoveryResponse.class);
             var body = Objects.requireNonNull(
                     response.getBody(), "Demo recovery response body");
             if (body.fencingToken() != context.fencingToken()) {

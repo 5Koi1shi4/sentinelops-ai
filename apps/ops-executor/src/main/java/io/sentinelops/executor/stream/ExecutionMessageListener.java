@@ -6,6 +6,7 @@ import io.sentinelops.executor.controlplane.ControlPlaneClient.TerminalControlPl
 import io.sentinelops.executor.runbook.ExecutionStepResult;
 import io.sentinelops.executor.runbook.IdempotencyContext;
 import io.sentinelops.executor.runbook.RunbookDispatcher;
+import io.sentinelops.executor.runbook.StepIdempotency;
 import io.sentinelops.executor.runbook.UnsupportedRunbookStepException;
 import io.sentinelops.executor.ticket.ExecutionTicketVerifier;
 import io.sentinelops.executor.ticket.InvalidExecutionTicket;
@@ -16,6 +17,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -57,19 +59,40 @@ public class ExecutionMessageListener {
             }
             var context = new IdempotencyContext(
                     step.executionId(), step.stepId(), step.fencingToken());
+            int attemptNo = Math.toIntExact(step.fencingToken());
             try (var activeLease = leaseHeartbeat.start(message, claim, attemptId)) {
+                recordPhase(activeLease, message, step.stepId(), claim.fencingToken(),
+                        attemptNo, "prepared", attemptId);
                 ExecutionStepResult result;
+                var dispatched = new AtomicBoolean();
                 try {
-                    result = dispatcher.dispatch(step, context);
+                    result = dispatcher.dispatch(step, context,
+                            () -> {
+                                recordPhase(activeLease, message, step.stepId(),
+                                        claim.fencingToken(), attemptNo,
+                                        "dispatched", attemptId);
+                                dispatched.set(true);
+                            });
                 } catch (UnsupportedRunbookStepException rejected) {
                     result = ExecutionStepResult.failed(
                             "executor-policy-v1",
                             sha256(step.adapterId() + ':' + step.operation()),
                             Map.of("errorCode", "unsupported_runbook_step"));
+                } catch (RuntimeException transportFailure) {
+                    if (!dispatched.get()) {
+                        throw transportFailure;
+                    }
+                    recordPhase(activeLease, message, step.stepId(), claim.fencingToken(),
+                            attemptNo, "unknown_after_dispatch", attemptId);
+                    if (StepIdempotency.mayReplayAfterDispatch(step)) {
+                        throw transportFailure;
+                    }
+                    acknowledger.acknowledge(message);
+                    return;
                 }
                 String executionTicket = activeLease.ticketForResult();
                 var report = report(
-                        step.adapterId(), step.stepId(), step.fencingToken(), result);
+                        step.adapterId(), step.stepId(), step.fencingToken(), attemptNo, result);
                 if (result.succeeded()) {
                     controlPlane.complete(
                             message.executionId(),
@@ -94,15 +117,36 @@ public class ExecutionMessageListener {
         return message.recordId() + ':' + action + ':' + attemptId;
     }
 
+    private void recordPhase(
+            ExecutionLeaseHeartbeat.ActiveLease activeLease,
+            ExecutionMessage message,
+            String stepId,
+            long fencingToken,
+            int attemptNo,
+            String phase,
+            String attemptId) {
+        activeLease.withCurrentTicket(ticket -> {
+            var currentStep = verifier.verify(ticket, message.executionId());
+            if (currentStep.fencingToken() != fencingToken
+                    || !currentStep.stepId().equals(stepId)) {
+                throw new InvalidExecutionTicket(
+                        "Current execution ticket no longer authorizes the Runbook step");
+            }
+            controlPlane.recordPhase(message.executionId(), ticket, fencingToken,
+                    stepId, attemptNo, phase, attemptKey(message, phase, attemptId));
+        });
+    }
+
     private AttemptReport report(
             String adapterId,
             String stepId,
             long fencingToken,
+            int attemptNo,
             ExecutionStepResult result) {
         return new AttemptReport(
                 fencingToken,
                 stepId,
-                1,
+                attemptNo,
                 adapterId,
                 result.adapterVersion(),
                 result.requestHash(),

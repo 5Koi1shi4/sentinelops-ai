@@ -20,6 +20,14 @@ Demo Compose 加入只连接私有 `control-plane` 网络、没有宿主机端�
 
 前端按锁文件正常 `npm ci` 后，OpenAPI 类型检查、Lint、格式检查、54 项标准 Vitest 与 Vite 生产构建均通过（`build/stage2b-task2-npm-ci-final.log`、`build/stage2b-task2-vitest-final.log`、`build/stage2b-task2-web-build-final.log`）。隔离 Compose 全部服务达到 Healthy；Nginx 实际响应包含预期 CSP、nosniff、Referrer-Policy、Permissions-Policy 和拒绝嵌入头，HTTP 与伪造转发协议请求均无 HSTS。Playwright 完整 6 项通过（`build/stage2b-task2-all-browser-e2e.log`），涵盖事故闭环、治理流程与 3 项安全边界；隔离项目容器、网络和数据卷已清理。CORS 专项验证控制台写命令所需 `If-Match` 与 `Idempotency-Key`。只读代码评审未发现阻断或高优先级问题。
 
+## Task 3：执行租约、心跳、fencing 和未知结果语义（已完成）
+
+V18 增加不可更新、不可删除的 `execution_attempt_event`，记录 `prepared`、`dispatched` 和终态。Executor 在已验票且已续租后准备步骤；Demo HTTP 适配器在真正发出请求前记录 `dispatched`，结果回报与 `acknowledged` 或 `failed_before_dispatch` 同事务落库。正式内部结果 API 拒绝缺少阶段证据的回报。领取、续租和阶段追加在数据库核验当前 owner、票据 JTI、fencing token、有效审批、Runbook checksum 与租约；完成回报锁定当前执行并由条件更新再次检验 owner、fencing token 与未过期租约。旧 owner 的迟到完成不能覆盖新 owner。租约为 30 秒，心跳间隔 10 秒；两次连续暂时性心跳失败会阻止新的分发，票据过期边界不得开始新步骤，控制平面与 OAuth HTTP 调用设 2 秒连接、5 秒读取超时。
+
+已分发但结果未知时，仅目标为 `demo-checkout` 的 `demo-http/recover_connection_pool` 具备已验证的稳定幂等键与目标 fencing，允许新租约重试；其他操作立即升级事故，留下 `unknown_after_dispatch`、一次脱敏未知结果摘要和人工核对说明。审查发现审批在分发后失效会漏记未知结果，已增加真实 PostgreSQL 回归并修复，审批失效原因一并写入事件。新增生产适配器须在 Task 4 逐项证明重放语义后扩充白名单。
+
+红—绿记录包括 `build/stage2b-task3-lease-red.log`、`build/stage2b-task3-journal-red.log`、`build/stage2b-task3-crash-red.log`、`build/stage2b-task3-executor-phase-red.log`、`build/stage2b-task3-heartbeat-red.log`、`build/stage2b-task3-ticket-expiry-red.log` 和 `build/stage2b-task3-revoked-unknown-red.log`。Java 21 完整回归为 API 385 项（按既有测试安排跳过 1 项）、Executor 37 项、Demo 13 项，零失败（`build/stage2b-task3-all-java-it-final.log`）；最后的审查修复又通过执行/租约 PostgreSQL 专项 23 项（`build/stage2b-task3-revoked-unknown-green.log`）。Valkey Stream 专项 3 项通过（`build/stage2b-task3-redis-consumer-green.log`）。只读审查发现的唯一 P2 已修复。
+
 ## 下一实施任务
 
-按计划开始 Task 3：执行租约、心跳、fencing 和未知结果语义。
+按计划开始 Task 4：生产 HTTP 与 Kubernetes Runbook 适配器及严格白名单。

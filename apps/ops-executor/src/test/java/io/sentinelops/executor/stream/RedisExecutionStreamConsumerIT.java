@@ -153,6 +153,8 @@ class RedisExecutionStreamConsumerIT {
         var dispatcher = new RunbookDispatcher(java.util.List.of(countingAdapter(sideEffects)));
 
         expectClaimAccepted(server, executionId, firstRecordId);
+        expectAttemptPhase(server, executionId, firstRecordId, "prepared");
+        expectAttemptPhase(server, executionId, firstRecordId, "dispatched");
         server.expect(requestTo(controlUrl(executionId, "complete")))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header(
@@ -225,7 +227,7 @@ class RedisExecutionStreamConsumerIT {
                 .when(controlPlane)
                 .heartbeat(eq(executionId), any(String.class), eq(1L), any(String.class));
         var verifier = mock(ExecutionTicketVerifier.class);
-        when(verifier.verify("signed-ticket", executionId))
+        when(verifier.verify(any(String.class), eq(executionId)))
                 .thenReturn(authorizedStep(executionId));
         var dispatchStarted = new CountDownLatch(1);
         var releaseDispatch = new CountDownLatch(1);
@@ -313,6 +315,15 @@ class RedisExecutionStreamConsumerIT {
                         .body("{\"errorCode\":\"execution_not_claimable\"}"));
     }
 
+    private void expectAttemptPhase(
+            MockRestServiceServer server, UUID executionId,
+            String recordId, String phase) {
+        server.expect(requestTo(controlUrl(executionId, "attempt-events")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Idempotency-Key", startsWith(recordId + ':' + phase + ':')))
+                .andRespond(withNoContent());
+    }
+
     private String controlUrl(UUID executionId, String action) {
         return "https://control.example.test/internal/v1/executions/"
                 + executionId + ':' + action;
@@ -393,6 +404,11 @@ class RedisExecutionStreamConsumerIT {
 
     private ExecutionLeaseHeartbeat noOpHeartbeat() {
         return (message, claim, attemptId) -> new ExecutionLeaseHeartbeat.ActiveLease() {
+            @Override
+            public void withCurrentTicket(java.util.function.Consumer<String> action) {
+                action.accept(claim.ticket());
+            }
+
             @Override
             public String ticketForResult() {
                 return claim.ticket();

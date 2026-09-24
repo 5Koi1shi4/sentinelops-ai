@@ -210,10 +210,10 @@ git commit -m "feat: enforce production trust boundaries"
 - Create: `apps/ops-api/src/main/resources/db/migration/V18__execution_attempt_events.sql`
 - Modify: `apps/ops-api/src/main/java/io/sentinelops/api/execution/application/ExecutionApplicationService.java`
 - Modify: `apps/ops-api/src/main/java/io/sentinelops/api/execution/adapter/out/persistence/ExecutionStore.java`
-- Create: `apps/ops-api/src/main/java/io/sentinelops/api/execution/application/ExecutionLeasePolicy.java`
+- Use: `apps/ops-api/src/main/java/io/sentinelops/api/execution/adapter/out/persistence/ExecutionStore.java` for database-enforced lease policy
 - Create: `apps/ops-api/src/main/java/io/sentinelops/api/execution/application/ExecutionResultPolicy.java`
 - Modify: `apps/ops-executor/src/main/java/io/sentinelops/executor/stream/ExecutionMessageListener.java`
-- Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/controlplane/LeaseHeartbeat.java`
+- Modify: existing `apps/ops-executor/src/main/java/io/sentinelops/executor/stream/ExecutionLeaseHeartbeat.java` and `ScheduledExecutionLeaseHeartbeat.java`
 - Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/runbook/StepIdempotency.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/execution/ExecutionLeaseConcurrencyIT.java`
 - Create: `apps/ops-executor/src/test/java/io/sentinelops/executor/ExecutorCrashRecoveryIT.java`
@@ -224,7 +224,7 @@ git commit -m "feat: enforce production trust boundaries"
 - Produces: `ExecutionResultPolicy.decide(stepDefinition, adapterResult): ResultDisposition`.
 - Consumes: existing claim/heartbeat/result APIs and Runbook idempotency metadata.
 
-- [ ] **Step 1: Write failing crash/race tests**
+- [x] **Step 1: Write failing crash/race tests**
 
 ```java
 @Test void onlyOneOfEightConcurrentClaimsReceivesTheCurrentFencingToken() {}
@@ -234,7 +234,7 @@ git commit -m "feat: enforce production trust boundaries"
 @Test void heartbeatNeverExtendsARevokedOrTerminalExecution() {}
 ```
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 Run:
 
@@ -244,7 +244,7 @@ Run:
 
 Expected: FAIL because Stage 1 has only minimal lease behavior.
 
-- [ ] **Step 3: Implement state-conditioned heartbeat and completion SQL**
+- [x] **Step 3: Implement state-conditioned heartbeat and completion SQL**
 
 Heartbeat:
 
@@ -262,7 +262,7 @@ returning lease_until;
 
 Completion/failure uses the same identity/token predicates and updates only once. Zero rows returns typed stale/revoked conflict. Keep token checks in the database statement, not a prior SELECT.
 
-- [ ] **Step 4: Implement explicit attempt phases and outcome policy**
+- [x] **Step 4: Implement explicit attempt phases and outcome policy**
 
 Create an append-only phase journal instead of mutating the immutable terminal `execution_attempt` row:
 
@@ -292,11 +292,11 @@ for each row execute function reject_row_mutation();
 
 Write `prepared` before the network call, `dispatched` immediately before handing bytes to the adapter transport, and one terminal phase afterward; the terminal `execution_attempt` remains a sanitized summary inserted once. An idempotent step may be retried after lease recovery; a non-idempotent `unknown_after_dispatch` transitions execution/incident to `escalated` with operator instructions. Never infer success from a timeout.
 
-- [ ] **Step 5: Implement bounded executor heartbeat lifecycle**
+- [x] **Step 5: Implement bounded executor heartbeat lifecycle**
 
 Start heartbeat only after verified ticket and before dispatch. Cancel it in `finally`. If two consecutive heartbeats fail, stop before the next Runbook step and report unknown/failure according to current phase. Ticket expiry forbids starting a new step but does not erase an already recorded outcome.
 
-- [ ] **Step 6: Verify concurrency and crash recovery**
+- [x] **Step 6: Verify concurrency and crash recovery**
 
 Run:
 
@@ -306,7 +306,7 @@ Run:
 
 Expected: PASS; no duplicate effect, no stale completion, no retry of unknown non-idempotent side effect.
 
-- [ ] **Step 7: Commit execution reliability**
+- [x] **Step 7: Commit execution reliability**
 
 ```powershell
 git add apps/ops-api apps/ops-executor
@@ -366,6 +366,8 @@ Add `io.fabric8:kubernetes-client:7.8.0` and its mock-server test artifact. Cata
 - [ ] **Step 4: Implement exact operation-specific adapters**
 
 HTTP adapter uses configured method/path/body template and permits only typed substitutions defined by the action. Kubernetes restart patches only `spec.template.metadata.annotations['sentinelops.io/restarted-at']`; scale patches only `spec.replicas` within catalog bounds. Use resourceVersion preconditions, field manager `sentinelops-executor`, request timeout, and service account. Do not expose Fabric8 client objects to Runbook definitions.
+
+每个新适配器必须覆写三参数 `execute(step, context, beforeTransport)`：先校验签名步骤、目标、参数和本地凭据，再紧贴出站传输前调用 `beforeTransport`。接口默认实现不能保证生产适配器的这一顺序。只有目标的稳定幂等键与 fencing 契约经过测试，才能同时加入控制平面和 Executor 的重放白名单；其他步骤分发后结果未知时升级人工核对。
 
 - [ ] **Step 5: Create minimum Kubernetes RBAC and verify forbidden calls**
 

@@ -1,13 +1,16 @@
 package io.sentinelops.executor.controlplane;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.net.http.HttpClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
@@ -30,7 +33,7 @@ public class ExecutorOAuth2TokenProvider {
             @Value("${sentinelops.oauth2.token-uri}") String tokenUri,
             @Value("${sentinelops.oauth2.client-id}") String clientId,
             @Value("${sentinelops.oauth2.client-secret}") String clientSecret) {
-        this(restClient.build(), tokenUri, clientId, clientSecret, Clock.systemUTC());
+        this(configuredClient(restClient), tokenUri, clientId, clientSecret, Clock.systemUTC());
     }
 
     public ExecutorOAuth2TokenProvider(
@@ -89,6 +92,15 @@ public class ExecutorOAuth2TokenProvider {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static RestClient configuredClient(RestClient.Builder builder) {
+        var httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        var requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        return builder.requestFactory(requestFactory).build();
     }
 
     private static String requireText(String value, String field) {

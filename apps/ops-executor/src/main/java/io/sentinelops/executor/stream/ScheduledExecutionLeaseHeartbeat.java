@@ -4,15 +4,18 @@ import io.sentinelops.executor.controlplane.ControlPlaneClient;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.ClaimedExecution;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -59,6 +62,8 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
         }
         var failure = new AtomicReference<RuntimeException>();
         var currentTicket = new AtomicReference<>(claim.ticket());
+        var leaseUntil = new AtomicReference<>(claim.leaseUntil());
+        var consecutiveFailures = new AtomicInteger();
         var sequence = new AtomicLong();
         var pulseLock = new ReentrantLock();
         var finishing = new AtomicBoolean();
@@ -69,6 +74,9 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
                 sequence,
                 failure,
                 currentTicket,
+                leaseUntil,
+                consecutiveFailures,
+                true,
                 finishing,
                 pulseLock);
         RuntimeException initialFailure = failure.get();
@@ -83,13 +91,16 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
                         sequence,
                         failure,
                         currentTicket,
+                        leaseUntil,
+                        consecutiveFailures,
+                        false,
                         finishing,
                         pulseLock),
                 interval.toMillis(),
                 interval.toMillis(),
                 TimeUnit.MILLISECONDS);
         return new ScheduledActiveLease(
-                future, failure, currentTicket, finishing, pulseLock);
+                future, failure, currentTicket, leaseUntil, finishing, pulseLock);
     }
 
     private void pulse(
@@ -99,6 +110,9 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
             AtomicLong sequence,
             AtomicReference<RuntimeException> failure,
             AtomicReference<String> currentTicket,
+            AtomicReference<Instant> leaseUntil,
+            AtomicInteger consecutiveFailures,
+            boolean initial,
             AtomicBoolean finishing,
             ReentrantLock pulseLock) {
         if (failure.get() != null || finishing.get()) {
@@ -121,8 +135,14 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
                         "Heartbeat response does not match the active execution lease");
             }
             currentTicket.set(renewed.ticket());
+            leaseUntil.set(renewed.leaseUntil());
+            consecutiveFailures.set(0);
         } catch (RuntimeException heartbeatFailure) {
-            failure.compareAndSet(null, heartbeatFailure);
+            if (initial
+                    || !(heartbeatFailure instanceof ControlPlaneClient.TransientControlPlaneException)
+                    || consecutiveFailures.incrementAndGet() >= 2) {
+                failure.compareAndSet(null, heartbeatFailure);
+            }
         } finally {
             pulseLock.unlock();
         }
@@ -149,9 +169,36 @@ public final class ScheduledExecutionLeaseHeartbeat implements ExecutionLeaseHea
             ScheduledFuture<?> future,
             AtomicReference<RuntimeException> failure,
             AtomicReference<String> currentTicket,
+            AtomicReference<Instant> leaseUntil,
             AtomicBoolean finishing,
             ReentrantLock pulseLock)
             implements ActiveLease {
+
+        @Override
+        public void withCurrentTicket(Consumer<String> action) {
+            Objects.requireNonNull(action, "action");
+            pulseLock.lock();
+            try {
+                if (finishing.get()) {
+                    throw new IllegalStateException("Execution lease is finishing");
+                }
+                RuntimeException heartbeatFailure = failure.get();
+                if (heartbeatFailure != null) {
+                    throw heartbeatFailure;
+                }
+                if (!Instant.now().isBefore(leaseUntil.get())) {
+                    throw new ControlPlaneClient.TransientControlPlaneException(
+                            "Execution lease expired before dispatch");
+                }
+                action.accept(currentTicket.get());
+                if (!Instant.now().isBefore(leaseUntil.get())) {
+                    throw new ControlPlaneClient.TransientControlPlaneException(
+                            "Execution lease expired during attempt preparation");
+                }
+            } finally {
+                pulseLock.unlock();
+            }
+        }
 
         @Override
         public String ticketForResult() {

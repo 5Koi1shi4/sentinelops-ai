@@ -42,6 +42,7 @@ public class ExecutionApplicationService {
     private static final String CREATE_ROUTE = "POST:/api/v1/incidents/{incidentId}/executions";
     private static final String CLAIM_ROUTE = "POST:/internal/v1/executions/{id}:claim";
     private static final String HEARTBEAT_ROUTE = "POST:/internal/v1/executions/{id}:heartbeat";
+    private static final String ATTEMPT_EVENT_ROUTE = "POST:/internal/v1/executions/{id}:attempt-events";
     private static final String COMPLETE_ROUTE = "POST:/internal/v1/executions/{id}:complete";
     private static final String FAIL_ROUTE = "POST:/internal/v1/executions/{id}:fail";
 
@@ -153,6 +154,9 @@ public class ExecutionApplicationService {
         if (outcome.activeLease()) {
             return ClaimDraft.activeLeaseRejected();
         }
+        if (outcome.unknownOutcome()) {
+            return ClaimDraft.unknownOutcomeRejected();
+        }
         return outcome.authorizationInvalidated()
                 ? ClaimDraft.invalidatedAuthorization()
                 : ClaimDraft.unavailable();
@@ -233,6 +237,12 @@ public class ExecutionApplicationService {
                     "execution_authorization_invalidated",
                     "The execution authorization is no longer valid and was escalated.");
         }
+        if (draft.unknownOutcome()) {
+            return new ClaimProblem(
+                    HttpStatus.CONFLICT,
+                    "execution_outcome_unknown",
+                    "The dispatched non-idempotent effect requires manual reconciliation.");
+        }
         return new ClaimProblem(
                 HttpStatus.CONFLICT,
                 "execution_not_claimable",
@@ -311,6 +321,52 @@ public class ExecutionApplicationService {
                 signed.ticket());
     }
 
+    public AttemptPhaseView recordAttemptPhase(
+            UUID executionId,
+            String executorId,
+            long fencingToken,
+            String executionTicket,
+            AttemptPhaseCommand command,
+            String principalKey,
+            String idempotencyKey) {
+        Objects.requireNonNull(command, "command");
+        var response = idempotency.execute(
+                new IdempotencyService.Scope(principalKey, ATTEMPT_EVENT_ROUTE),
+                idempotencyKey,
+                sha256(executionId + ":" + executorId + ":" + fencingToken + ":"
+                        + sha256(executionTicket) + ":"
+                        + objectMapper.writeValueAsString(command)),
+                () -> {
+                    var ticket = verifyTicket(executionTicket, executionId, fencingToken);
+                    if (!command.stepId().equals(ticket.stepId())) {
+                        throw new InvalidExecutionTicket(
+                                "Attempt phase step does not match the signed ticket");
+                    }
+                    UUID eventId = store.appendAttemptEvent(
+                                    ids.generate(),
+                                    executionId,
+                                    requireText(executorId, "executorId"),
+                                    ticket.jti(),
+                                    ticket.runbookChecksum(),
+                                    command.stepId(),
+                                    command.attemptNo(),
+                                    fencingToken,
+                                    command.phase(),
+                                    objectMapper.writeValueAsString(command.metadata()))
+                            .orElseThrow(this::staleFencingToken);
+                    if ("unknown_after_dispatch".equals(command.phase())) {
+                        store.escalateCurrentUnknownOutcome(
+                                executionId, command.stepId(), command.attemptNo(),
+                                fencingToken, ids.generate());
+                    }
+                    return new IdempotencyService.Response(
+                            HttpStatus.OK.value(),
+                            objectMapper.valueToTree(new AttemptPhaseView(
+                                    eventId, executionId, command.phase())));
+                });
+        return readResponse(response, AttemptPhaseView.class);
+    }
+
     @Transactional
     public Execution complete(
             UUID executionId,
@@ -327,7 +383,8 @@ public class ExecutionApplicationService {
                 ExecutionStatus.VERIFYING,
                 "succeeded",
                 IncidentCommand.START_VERIFICATION,
-                "execution_completed");
+                "execution_completed",
+                false);
     }
 
     public Execution complete(
@@ -369,7 +426,8 @@ public class ExecutionApplicationService {
                 ExecutionStatus.FAILED,
                 "failed",
                 IncidentCommand.ESCALATE,
-                "execution_failed");
+                "execution_failed",
+                false);
     }
 
     public Execution fail(
@@ -435,7 +493,8 @@ public class ExecutionApplicationService {
                                     executionTarget,
                                     attemptOutcome,
                                     incidentCommand,
-                                    eventType)));
+                                    eventType,
+                                    true)));
                 });
         return readResponse(response, Execution.class);
     }
@@ -573,7 +632,8 @@ public class ExecutionApplicationService {
             ExecutionStatus executionTarget,
             String attemptOutcome,
             IncidentCommand incidentCommand,
-            String eventType) {
+            String eventType,
+            boolean requireJournal) {
         Objects.requireNonNull(command, "command");
         executorId = requireText(executorId, "executorId");
         if (fencingToken <= 0) {
@@ -590,6 +650,13 @@ public class ExecutionApplicationService {
                 || !command.adapterId().equals(verifiedTicket.adapterId())) {
             throw new InvalidExecutionTicket(
                     "Execution result step or adapter does not match the signed ticket");
+        }
+        var terminalPhase = store.appendResultPhase(
+                ids.generate(), executionId, command.stepId(), command.attemptNo(),
+                fencingToken, "succeeded".equals(attemptOutcome));
+        if (requireJournal && terminalPhase.isEmpty()) {
+            throw problem(HttpStatus.CONFLICT, "execution_attempt_phase_missing",
+                    "The execution result needs a prepared and dispatched attempt record.");
         }
         store.insertAttempt(
                 ids.generate(),
@@ -724,25 +791,48 @@ public class ExecutionApplicationService {
     public record HeartbeatView(
             UUID executionId, long fencingToken, Instant leaseUntil, String ticket) {}
 
+    public record AttemptPhaseView(UUID eventId, UUID executionId, String phase) {}
+
+    public record AttemptPhaseCommand(
+            String stepId, int attemptNo, String phase, Map<String, Object> metadata) {
+        public AttemptPhaseCommand {
+            stepId = requireText(stepId, "stepId");
+            if (attemptNo <= 0) {
+                throw new IllegalArgumentException("attemptNo must be positive");
+            }
+            phase = requireText(phase, "phase");
+            if (!List.of("prepared", "dispatched", "unknown_after_dispatch")
+                    .contains(phase)) {
+                throw new IllegalArgumentException("Unsupported attempt phase");
+            }
+            metadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata"));
+        }
+    }
+
     private record ClaimDraft(
             ExecutionStore.ClaimLease lease,
             boolean authorizationInvalidated,
-            boolean activeLease) {
+            boolean activeLease,
+            boolean unknownOutcome) {
 
         private static ClaimDraft claimed(ExecutionStore.ClaimLease lease) {
-            return new ClaimDraft(lease, false, false);
+            return new ClaimDraft(lease, false, false, false);
         }
 
         private static ClaimDraft invalidatedAuthorization() {
-            return new ClaimDraft(null, true, false);
+            return new ClaimDraft(null, true, false, false);
         }
 
         private static ClaimDraft activeLeaseRejected() {
-            return new ClaimDraft(null, false, true);
+            return new ClaimDraft(null, false, true, false);
+        }
+
+        private static ClaimDraft unknownOutcomeRejected() {
+            return new ClaimDraft(null, false, false, true);
         }
 
         private static ClaimDraft unavailable() {
-            return new ClaimDraft(null, false, false);
+            return new ClaimDraft(null, false, false, false);
         }
     }
 

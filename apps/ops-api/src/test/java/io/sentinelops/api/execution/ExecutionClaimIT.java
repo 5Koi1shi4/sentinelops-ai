@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 
 import com.nimbusds.jwt.SignedJWT;
 import io.sentinelops.api.execution.application.ExecutionApplicationService.CompletionCommand;
+import io.sentinelops.api.execution.application.ExecutionApplicationService.AttemptPhaseCommand;
 import io.sentinelops.api.execution.application.ExecutionTicketVerifier;
 import io.sentinelops.api.execution.application.InvalidExecutionTicket;
 import io.sentinelops.api.incident.application.AlertEnvelope;
@@ -50,6 +51,14 @@ class ExecutionClaimIT extends ExecutionFixtureSupport {
                 created.id(), "executor-idempotent", principalKey, claimKey);
 
         assertThat(replayedClaim).isEqualTo(firstClaim);
+        executions.recordAttemptPhase(created.id(), "executor-idempotent",
+                firstClaim.fencingToken(), firstClaim.ticket(),
+                new AttemptPhaseCommand("recover-one", 1, "prepared", Map.of()),
+                principalKey, "prepared-" + created.id());
+        executions.recordAttemptPhase(created.id(), "executor-idempotent",
+                firstClaim.fencingToken(), firstClaim.ticket(),
+                new AttemptPhaseCommand("recover-one", 1, "dispatched", Map.of()),
+                principalKey, "dispatched-" + created.id());
         var completion = new CompletionCommand(
                 "recover-one",
                 1,

@@ -76,7 +76,7 @@ public class ExecutionTicketVerifier {
             Instant expiresAt = instant(claims.getExpirationTime(), "exp");
             if (issuedAt.isAfter(now.plusSeconds(5))
                     || notBefore.isAfter(now.plusSeconds(5))
-                    || !expiresAt.isAfter(now.minusSeconds(5))
+                    || !expiresAt.isAfter(now)
                     || !expiresAt.isAfter(issuedAt)) {
                 throw invalid("Execution ticket is outside its valid time window");
             }

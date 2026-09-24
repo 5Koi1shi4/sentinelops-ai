@@ -78,6 +78,12 @@ class ExecutionTicketTest {
         assertThat(verified.executionId()).isEqualTo(claims.executionId());
         assertThat(verified.fencingToken()).isEqualTo(7);
         assertThat(verified.runbookChecksum()).isEqualTo("checksum-v1");
+        assertThatThrownBy(() -> signer.verify(
+                        token,
+                        "urn:sentinelops:ops-api",
+                        "sentinelops-executor",
+                        now.plusSeconds(60)))
+                .isInstanceOf(InvalidExecutionTicket.class);
         assertThat(signer.publicJwks().path("keys").get(0).has("d")).isFalse();
         assertThat(new ConfiguredExecutionKeyConfiguration()
                         .executionSigningKey(new MockEnvironment()

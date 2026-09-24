@@ -1,6 +1,7 @@
 package io.sentinelops.executor.stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -155,6 +156,36 @@ class ScheduledExecutionLeaseHeartbeatTest {
 
         verify(controlPlane, times(2))
                 .heartbeat(eq(executionId), anyString(), eq(3L), anyString());
+    }
+
+    @Test
+    void oneTransientMissIsToleratedButTwoConsecutiveMissesStopDispatch() {
+        var controlPlane = mock(ControlPlaneClient.class);
+        UUID executionId = UUID.randomUUID();
+        var calls = new AtomicInteger();
+        doAnswer(invocation -> {
+            if (calls.incrementAndGet() == 1) {
+                return new HeartbeatLease(executionId, 3,
+                        Instant.now().plusSeconds(30), "rotated-ticket");
+            }
+            throw new ControlPlaneClient.TransientControlPlaneException("heartbeat missed");
+        }).when(controlPlane).heartbeat(eq(executionId), anyString(), eq(3L), anyString());
+        var scheduler = new CapturingScheduler();
+        var heartbeats = new ScheduledExecutionLeaseHeartbeat(
+                controlPlane, Duration.ofSeconds(10), scheduler);
+        var message = new ExecutionMessage("1710000000010-0", UUID.randomUUID(), executionId);
+        var claim = new ClaimedExecution(executionId, 3,
+                Instant.now().plusSeconds(30), "signed-ticket");
+
+        try (var lease = heartbeats.start(message, claim, "delivery-attempt")) {
+            scheduler.runCapturedTaskDespiteCancellation();
+            lease.withCurrentTicket(ticket -> assertThat(ticket).isEqualTo("rotated-ticket"));
+            scheduler.runCapturedTaskDespiteCancellation();
+            assertThatThrownBy(() -> lease.withCurrentTicket(ticket -> {}))
+                    .isInstanceOf(ControlPlaneClient.TransientControlPlaneException.class);
+        } finally {
+            heartbeats.shutdown();
+        }
     }
 
     private static final class CapturingScheduler extends ScheduledThreadPoolExecutor {

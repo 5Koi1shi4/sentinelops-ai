@@ -97,6 +97,21 @@ class ExecutionTicketVerifierTest {
                 .hasMessageContaining("time");
     }
 
+    @Test
+    void ticketCannotStartAStepAtItsExactExpirationTime() throws Exception {
+        UUID executionId = UUID.randomUUID();
+        verifier = new ExecutionTicketVerifier(
+                () -> new JWKSet(signingKey.toPublicJWK()),
+                "urn:sentinelops:ops-api",
+                "sentinelops-executor",
+                Clock.fixed(now.plusSeconds(60), ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> verifier.verify(
+                        ticket(executionId, List.of("sentinelops-executor")), executionId))
+                .isInstanceOf(InvalidExecutionTicket.class)
+                .hasMessageContaining("time");
+    }
+
     private String ticket(UUID executionId, List<String> audience) throws Exception {
         var claims = new JWTClaimsSet.Builder()
                 .jwtID(UUID.randomUUID().toString())

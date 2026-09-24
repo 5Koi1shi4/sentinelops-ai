@@ -1,6 +1,8 @@
 package io.sentinelops.api.execution.adapter.in.internal;
 
 import io.sentinelops.api.execution.application.ExecutionApplicationService;
+import io.sentinelops.api.execution.application.ExecutionApplicationService.AttemptPhaseCommand;
+import io.sentinelops.api.execution.application.ExecutionApplicationService.AttemptPhaseView;
 import io.sentinelops.api.execution.application.ExecutionApplicationService.ClaimView;
 import io.sentinelops.api.execution.application.ExecutionApplicationService.CompletionCommand;
 import io.sentinelops.api.execution.application.ExecutionApplicationService.HeartbeatView;
@@ -79,6 +81,24 @@ public class ExecutorControlController {
                 idempotencyKey);
     }
 
+    @PostMapping("/{executionId}:attempt-events")
+    AttemptPhaseView recordAttemptPhase(
+            @PathVariable UUID executionId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestHeader("X-SentinelOps-Execution-Ticket") String executionTicket,
+            @Valid @RequestBody AttemptPhaseBody body,
+            @AuthenticationPrincipal Jwt jwt) {
+        var principal = CurrentPrincipal.from(jwt);
+        return executions.recordAttemptPhase(
+                executionId,
+                jwt.getSubject(),
+                body.fencingToken(),
+                executionTicket,
+                body.toCommand(),
+                principal.principalKey(),
+                idempotencyKey);
+    }
+
     @PostMapping("/{executionId}:fail")
     Execution fail(
             @PathVariable UUID executionId,
@@ -98,6 +118,18 @@ public class ExecutorControlController {
     }
 
     public record FenceBody(@Min(1) long fencingToken) {}
+
+    public record AttemptPhaseBody(
+            @Min(1) long fencingToken,
+            @NotBlank String stepId,
+            @Min(1) int attemptNo,
+            @NotBlank String phase,
+            @NotNull Map<String, Object> metadata) {
+
+        AttemptPhaseCommand toCommand() {
+            return new AttemptPhaseCommand(stepId, attemptNo, phase, metadata);
+        }
+    }
 
     public record AttemptBody(
             @Min(1) long fencingToken,

@@ -2,6 +2,8 @@ package io.sentinelops.api.execution.adapter.out.persistence;
 
 import io.sentinelops.api.execution.domain.Execution;
 import io.sentinelops.api.execution.domain.ExecutionStatus;
+import io.sentinelops.api.execution.application.ExecutionResultPolicy;
+import io.sentinelops.api.shared.id.UuidV7Generator;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import java.sql.ResultSet;
@@ -26,10 +28,15 @@ public class ExecutionStore {
 
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
+    private final ExecutionResultPolicy resultPolicy;
+    private final UuidV7Generator ids;
 
-    public ExecutionStore(JdbcClient jdbc, ObjectMapper objectMapper) {
+    public ExecutionStore(JdbcClient jdbc, ObjectMapper objectMapper,
+            ExecutionResultPolicy resultPolicy, UuidV7Generator ids) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.resultPolicy = resultPolicy;
+        this.ids = ids;
     }
 
     public Optional<ApprovalSnapshot> lockApprovalForProposal(UUID proposalId) {
@@ -258,7 +265,20 @@ public class ExecutionStore {
                 .query(this::mapClaimLease)
                 .optional();
         if (claimed.isPresent()) {
-            return ClaimOutcome.claimed(claimed.orElseThrow());
+            var lease = claimed.orElseThrow();
+            if (!resultPolicy.mayReplayAfterDispatch(
+                    lease.adapterId(), lease.operation(), lease.target())) {
+                var dispatched = lastDispatchedAttempt(executionId, lease.stepId(),
+                        lease.fencingToken() - 1);
+                if (dispatched.isPresent()) {
+                    escalateUnknownOutcome(
+                            lease.executionId(), lease.incidentId(), lease.stepId(),
+                            lease.adapterId(), lease.fencingToken(),
+                            dispatched.orElseThrow(), invalidationEventId, false);
+                    return ClaimOutcome.unknownOutcomeRejected();
+                }
+            }
+            return ClaimOutcome.claimed(lease);
         }
 
         var context = lockClaimContext(executionId);
@@ -279,6 +299,16 @@ public class ExecutionStore {
         if (locked.incidentStatus() != IncidentStatus.EXECUTING
                 || !leaseCanBeReclaimed(locked)) {
             return ClaimOutcome.unavailable();
+        }
+        var dispatched = lastDispatchedAttempt(
+                executionId, locked.stepId(), locked.fencingToken());
+        if (dispatched.isPresent()) {
+            escalateUnknownOutcome(
+                    executionId, locked.incidentId(), locked.stepId(),
+                    locked.adapterId(), locked.fencingToken(),
+                    dispatched.orElseThrow(), invalidationEventId, false,
+                    invalidationReason);
+            return ClaimOutcome.unknownOutcomeRejected();
         }
 
         Instant invalidatedAt = locked.databaseNow();
@@ -323,6 +353,126 @@ public class ExecutionStore {
         return ClaimOutcome.invalidatedAuthorization();
     }
 
+    private Optional<DispatchedAttempt> lastDispatchedAttempt(
+            UUID executionId, String stepId, long maxFence) {
+        return jdbc.sql("""
+                        select attempt_no, fencing_token, occurred_at
+                        from execution_attempt_event
+                        where execution_id = :executionId
+                          and step_id = :stepId
+                          and phase = 'dispatched'
+                          and fencing_token <= :maxFence
+                        order by occurred_at desc, id desc
+                        limit 1
+                        """)
+                .param("executionId", executionId)
+                .param("stepId", stepId)
+                .param("maxFence", maxFence)
+                .query((rs, ignored) -> new DispatchedAttempt(
+                        rs.getInt("attempt_no"),
+                        rs.getLong("fencing_token"),
+                        rs.getObject("occurred_at", OffsetDateTime.class).toInstant()))
+                .optional();
+    }
+
+    public void escalateCurrentUnknownOutcome(
+            UUID executionId, String stepId, int attemptNo,
+            long fencingToken, UUID eventId) {
+        record UnknownStep(
+                UUID incidentId, String adapterId, String operation, String targetAlias) {}
+        var step = jdbc.sql("""
+                        select e.incident_id, e.target_alias, rv.adapter_id,
+                               rv.definition #>> '{steps,0,operation}' as operation
+                        from execution e
+                        join diagnosis_proposal p on p.id = e.proposal_id
+                        join runbook_version rv on rv.id = p.runbook_version_id
+                        where e.id = :executionId and e.status = 'running'
+                          and e.fencing_token = :fencingToken
+                        """)
+                .param("executionId", executionId)
+                .param("fencingToken", fencingToken)
+                .query((rs, ignored) -> new UnknownStep(
+                        rs.getObject("incident_id", UUID.class),
+                        rs.getString("adapter_id"),
+                        rs.getString("operation"),
+                        rs.getString("target_alias")))
+                .single();
+        if (resultPolicy.mayReplayAfterDispatch(
+                step.adapterId(), step.operation(), step.targetAlias())) {
+            return;
+        }
+        escalateUnknownOutcome(
+                executionId, step.incidentId(), stepId, step.adapterId(), fencingToken,
+                new DispatchedAttempt(attemptNo, fencingToken, databaseTime()),
+                eventId, true);
+    }
+
+    private void escalateUnknownOutcome(
+            UUID executionId, UUID incidentId, String stepId,
+            String adapterId, long currentFence,
+            DispatchedAttempt dispatched, UUID eventId, boolean phaseRecorded) {
+        escalateUnknownOutcome(executionId, incidentId, stepId, adapterId,
+                currentFence, dispatched, eventId, phaseRecorded, null);
+    }
+
+    private void escalateUnknownOutcome(
+            UUID executionId, UUID incidentId, String stepId,
+            String adapterId, long currentFence,
+            DispatchedAttempt dispatched, UUID eventId,
+            boolean phaseRecorded, String authorizationReason) {
+        Instant now = databaseTime();
+        int changed = jdbc.sql("""
+                        update execution
+                        set status = 'escalated', claimed_by = null, lease_until = null,
+                            completed_at = :now, updated_at = :now
+                        where id = :executionId and status = 'running'
+                          and fencing_token = :fencingToken
+                        """)
+                .param("executionId", executionId)
+                .param("fencingToken", currentFence)
+                .param("now", timestamp(now))
+                .update();
+        if (changed != 1) {
+            throw new OptimisticLockingFailureException(
+                    "Execution changed while escalating an unknown outcome");
+        }
+        insertAttempt(
+                ids.generate(), executionId, stepId,
+                dispatched.attemptNo(), dispatched.fencingToken(),
+                adapterId, "result-not-recorded", "result-not-recorded",
+                "unknown", "{\"reason\":\"dispatched_without_result\"}", now);
+        if (!phaseRecorded) {
+            appendUnknownAfterDispatch(
+                    ids.generate(), executionId, stepId,
+                    dispatched.attemptNo(), dispatched.fencingToken());
+        }
+        var incident = jdbc.sql("""
+                        select status, version from incident where id = :incidentId
+                        """)
+                .param("incidentId", incidentId)
+                .query((rs, ignored) -> new IncidentLease(
+                        IncidentStatus.fromDatabase(rs.getString("status")),
+                        rs.getLong("version")))
+                .single();
+        var transition = transitionIncident(
+                incidentId, incident.status(), IncidentStatus.ESCALATED,
+                incident.version(), now);
+        var payload = objectMapper.createObjectNode()
+                .put("executionId", executionId.toString())
+                .put("reason", authorizationReason == null
+                        ? "non_idempotent_dispatched_without_result"
+                        : "authorization_invalidated_after_dispatch")
+                .put("fencingToken", dispatched.fencingToken())
+                .put("instructions", "Inspect the target and reconcile the effect manually before any retry.");
+        if (authorizationReason != null) {
+            payload.put("authorizationReason", authorizationReason);
+        }
+        appendIncidentEvent(
+                eventId, incidentId, transition.sequence(),
+                "execution_outcome_unknown", "system", "sentinelops-api",
+                objectMapper.writeValueAsString(payload), now);
+    }
+
     private Optional<ClaimContext> lockClaimContext(UUID executionId) {
         var incidentId = jdbc.sql("select incident_id from execution where id = :executionId")
                 .param("executionId", executionId)
@@ -349,6 +499,8 @@ public class ExecutionStore {
                                  as proposal_matches,
                                e.target_alias = ar.target_alias as target_matches,
                                rv.lifecycle as runbook_lifecycle,
+                               rv.adapter_id,
+                               rv.definition #>> '{steps,0,stepId}' as step_id,
                                clock_timestamp() as database_now,
                                exists (
                                  select 1
@@ -378,6 +530,8 @@ public class ExecutionStore {
                             resultSet.getBoolean("proposal_matches"),
                             resultSet.getBoolean("target_matches"),
                             resultSet.getString("runbook_lifecycle"),
+                            resultSet.getString("adapter_id"),
+                            resultSet.getString("step_id"),
                             resultSet.getObject("database_now", OffsetDateTime.class).toInstant(),
                             resultSet.getBoolean("invalidation_recorded"),
                             incident.status(),
@@ -486,15 +640,25 @@ public class ExecutionStore {
                             ticket_issued_at = clock_timestamp(),
                             updated_at = clock_timestamp()
                         from diagnosis_proposal p,
-                             runbook_version rv
+                             runbook_version rv,
+                             approval_request ar,
+                             incident i
                         where e.id = :executionId
                           and e.status = 'running'
                           and e.claimed_by = :executorId
                           and e.fencing_token = :fencingToken
                           and e.ticket_jti = :ticketJti
                           and e.lease_until > clock_timestamp()
+                          and ar.id = e.approval_request_id
+                          and ar.status = 'approved'
+                          and ar.expires_at > clock_timestamp()
+                          and ar.proposal_hash = p.proposal_hash
+                          and ar.target_alias = e.target_alias
+                          and i.id = e.incident_id
+                          and i.status = 'executing'
                           and p.id = e.proposal_id
                           and rv.id = p.runbook_version_id
+                          and rv.lifecycle = 'published'
                           and rv.definition_checksum = :runbookChecksum
                         returning e.id, e.incident_id, e.proposal_id,
                                   e.ticket_jti, e.ticket_issued_at,
@@ -570,6 +734,98 @@ public class ExecutionStore {
                 incident.status()));
     }
 
+    public Optional<UUID> appendAttemptEvent(
+            UUID eventId,
+            UUID executionId,
+            String executorId,
+            String ticketJti,
+            String runbookChecksum,
+            String stepId,
+            int attemptNo,
+            long fencingToken,
+            String phase,
+            String metadataJson) {
+        return jdbc.sql("""
+                        with active as materialized (
+                          select e.id
+                          from execution e
+                          join diagnosis_proposal p on p.id = e.proposal_id
+                          join runbook_version rv on rv.id = p.runbook_version_id
+                          join approval_request ar on ar.id = e.approval_request_id
+                          join incident i on i.id = e.incident_id
+                          where e.id = :executionId
+                            and e.status = 'running'
+                            and e.claimed_by = :executorId
+                            and e.ticket_jti = :ticketJti
+                            and e.fencing_token = :fencingToken
+                            and e.fencing_token = :attemptNo
+                            and e.lease_until > clock_timestamp()
+                            and rv.definition_checksum = :runbookChecksum
+                            and rv.definition #>> '{steps,0,stepId}' = :stepId
+                            and rv.lifecycle = 'published'
+                            and ar.status = 'approved'
+                            and ar.expires_at > clock_timestamp()
+                            and ar.proposal_hash = p.proposal_hash
+                            and ar.target_alias = e.target_alias
+                            and i.status = 'executing'
+                          for update of e
+                        )
+                        insert into execution_attempt_event (
+                          id, execution_id, step_id, attempt_no, fencing_token,
+                          phase, metadata, occurred_at
+                        )
+                        select :eventId, active.id, :stepId, :attemptNo,
+                               :fencingToken, :phase, cast(:metadata as jsonb), clock_timestamp()
+                        from active
+                        where (:phase = 'prepared' and not exists (
+                                  select 1 from execution_attempt_event prior
+                                  where prior.execution_id = active.id
+                                    and prior.step_id = :stepId
+                                    and prior.attempt_no = :attemptNo
+                              ))
+                           or (:phase = 'dispatched' and exists (
+                                  select 1 from execution_attempt_event prior
+                                  where prior.execution_id = active.id
+                                    and prior.step_id = :stepId
+                                    and prior.attempt_no = :attemptNo
+                                    and prior.phase = 'prepared'
+                              ) and not exists (
+                                  select 1 from execution_attempt_event prior
+                                  where prior.execution_id = active.id
+                                    and prior.step_id = :stepId
+                                    and prior.attempt_no = :attemptNo
+                                    and prior.phase = 'dispatched'
+                              ))
+                           or (:phase = 'unknown_after_dispatch' and exists (
+                                  select 1 from execution_attempt_event prior
+                                  where prior.execution_id = active.id
+                                    and prior.step_id = :stepId
+                                    and prior.attempt_no = :attemptNo
+                                    and prior.phase = 'dispatched'
+                              ) and not exists (
+                                  select 1 from execution_attempt_event terminal
+                                  where terminal.execution_id = active.id
+                                    and terminal.step_id = :stepId
+                                    and terminal.attempt_no = :attemptNo
+                                    and terminal.phase in ('acknowledged', 'unknown_after_dispatch')
+                              ))
+                        on conflict (execution_id, step_id, attempt_no, phase) do nothing
+                        returning id
+                        """)
+                .param("eventId", eventId)
+                .param("executionId", executionId)
+                .param("executorId", executorId)
+                .param("ticketJti", ticketJti)
+                .param("runbookChecksum", runbookChecksum)
+                .param("stepId", stepId)
+                .param("attemptNo", attemptNo)
+                .param("fencingToken", fencingToken)
+                .param("phase", phase)
+                .param("metadata", metadataJson)
+                .query(UUID.class)
+                .optional();
+    }
+
     public void insertAttempt(
             UUID attemptId,
             UUID executionId,
@@ -607,6 +863,69 @@ public class ExecutionStore {
                 .update();
     }
 
+    public Optional<String> appendResultPhase(
+            UUID eventId,
+            UUID executionId,
+            String stepId,
+            int attemptNo,
+            long fencingToken,
+            boolean succeeded) {
+        return jdbc.sql("""
+                        with phase_state as (
+                          select
+                            count(*) filter (where phase = 'prepared') > 0 as prepared,
+                            count(*) filter (where phase = 'dispatched') > 0 as dispatched
+                          from execution_attempt_event
+                          where execution_id = :executionId
+                            and step_id = :stepId
+                            and attempt_no = :attemptNo
+                            and fencing_token = :fencingToken
+                        )
+                        insert into execution_attempt_event(
+                          id, execution_id, step_id, attempt_no, fencing_token,
+                          phase, metadata, occurred_at
+                        )
+                        select :eventId, :executionId, :stepId, :attemptNo,
+                               :fencingToken,
+                               case when dispatched then 'acknowledged'
+                                    else 'failed_before_dispatch' end,
+                               '{}'::jsonb, clock_timestamp()
+                        from phase_state
+                        where prepared and (dispatched or not :succeeded)
+                        returning phase
+                        """)
+                .param("eventId", eventId)
+                .param("executionId", executionId)
+                .param("stepId", stepId)
+                .param("attemptNo", attemptNo)
+                .param("fencingToken", fencingToken)
+                .param("succeeded", succeeded)
+                .query(String.class)
+                .optional();
+    }
+
+    private void appendUnknownAfterDispatch(
+            UUID eventId, UUID executionId, String stepId,
+            int attemptNo, long fencingToken) {
+        jdbc.sql("""
+                        insert into execution_attempt_event(
+                          id, execution_id, step_id, attempt_no, fencing_token,
+                          phase, metadata, occurred_at
+                        ) values (
+                          :eventId, :executionId, :stepId, :attemptNo,
+                          :fencingToken, 'unknown_after_dispatch', '{}'::jsonb,
+                          clock_timestamp()
+                        )
+                        on conflict (execution_id, step_id, attempt_no, phase) do nothing
+                        """)
+                .param("eventId", eventId)
+                .param("executionId", executionId)
+                .param("stepId", stepId)
+                .param("attemptNo", attemptNo)
+                .param("fencingToken", fencingToken)
+                .update();
+    }
+
     public void updateAfterAttempt(
             UUID executionId,
             ExecutionStatus status,
@@ -624,6 +943,7 @@ public class ExecutionStore {
                           and status = 'running'
                           and claimed_by = :executorId
                           and fencing_token = :fencingToken
+                          and lease_until > clock_timestamp()
                         """)
                 .param("status", status.databaseValue())
                 .param("terminal", status == ExecutionStatus.FAILED)
@@ -754,22 +1074,27 @@ public class ExecutionStore {
             Instant ticketIssuedAt) {}
 
     public record ClaimOutcome(
-            ClaimLease lease, boolean authorizationInvalidated, boolean activeLease) {
+            ClaimLease lease, boolean authorizationInvalidated,
+            boolean activeLease, boolean unknownOutcome) {
 
         private static ClaimOutcome claimed(ClaimLease lease) {
-            return new ClaimOutcome(lease, false, false);
+            return new ClaimOutcome(lease, false, false, false);
         }
 
         private static ClaimOutcome invalidatedAuthorization() {
-            return new ClaimOutcome(null, true, false);
+            return new ClaimOutcome(null, true, false, false);
         }
 
         private static ClaimOutcome activeLeaseRejected() {
-            return new ClaimOutcome(null, false, true);
+            return new ClaimOutcome(null, false, true, false);
+        }
+
+        private static ClaimOutcome unknownOutcomeRejected() {
+            return new ClaimOutcome(null, false, false, true);
         }
 
         private static ClaimOutcome unavailable() {
-            return new ClaimOutcome(null, false, false);
+            return new ClaimOutcome(null, false, false, false);
         }
     }
 
@@ -797,6 +1122,8 @@ public class ExecutionStore {
 
     private record IncidentLease(IncidentStatus status, long version) {}
 
+    private record DispatchedAttempt(int attemptNo, long fencingToken, Instant occurredAt) {}
+
     private record ClaimContext(
             UUID executionId,
             UUID incidentId,
@@ -808,6 +1135,8 @@ public class ExecutionStore {
             boolean proposalMatchesApproval,
             boolean targetMatchesApproval,
             String runbookLifecycle,
+            String adapterId,
+            String stepId,
             Instant databaseNow,
             boolean authorizationInvalidationRecorded,
             IncidentStatus incidentStatus,

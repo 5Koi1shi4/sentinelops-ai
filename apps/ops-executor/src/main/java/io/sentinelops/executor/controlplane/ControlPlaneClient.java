@@ -3,6 +3,7 @@ package io.sentinelops.executor.controlplane;
 import com.nimbusds.jose.jwk.JWKSet;
 import io.sentinelops.executor.ticket.ExecutionJwkProvider;
 import java.text.ParseException;
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -12,6 +13,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -24,6 +26,7 @@ public class ControlPlaneClient implements ExecutionJwkProvider {
     private static final Set<String> TERMINAL_CONFLICT_CODES = Set.of(
             "execution_not_claimable",
             "execution_authorization_invalidated",
+            "execution_outcome_unknown",
             "execution_not_running");
 
     private final RestClient client;
@@ -43,7 +46,7 @@ public class ControlPlaneClient implements ExecutionJwkProvider {
             @Value("${sentinelops.control-plane.jwks-cache-ttl:PT5M}")
                     Duration jwksCacheTtl) {
         this(
-                restClient.baseUrl(requireText(baseUrl, "baseUrl")).build(),
+                configuredClient(restClient, baseUrl),
                 tokens,
                 objectMapper,
                 audience,
@@ -94,6 +97,43 @@ public class ControlPlaneClient implements ExecutionJwkProvider {
             String idempotencyKey) {
         reportAttempt(
                 executionId, executionTicket, report, idempotencyKey, "complete");
+    }
+
+    public void recordPhase(
+            UUID executionId,
+            String executionTicket,
+            long fencingToken,
+            String stepId,
+            int attemptNo,
+            String phase,
+            String idempotencyKey) {
+        Objects.requireNonNull(executionId, "executionId");
+        if (fencingToken <= 0 || attemptNo <= 0) {
+            throw new IllegalArgumentException("fencingToken and attemptNo must be positive");
+        }
+        try {
+            client.post()
+                    .uri("/internal/v1/executions/{id}:attempt-events", executionId)
+                    .headers(headers -> {
+                        headers.setBearerAuth(apiToken());
+                        headers.set("Idempotency-Key", requireText(idempotencyKey, "idempotencyKey"));
+                        headers.set("X-SentinelOps-Execution-Ticket",
+                                requireText(executionTicket, "executionTicket"));
+                    })
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of(
+                            "fencingToken", fencingToken,
+                            "stepId", requireText(stepId, "stepId"),
+                            "attemptNo", attemptNo,
+                            "phase", requireText(phase, "phase"),
+                            "metadata", Map.of()))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException failure) {
+            throw classify(failure);
+        } catch (ResourceAccessException failure) {
+            throw new TransientControlPlaneException("Control plane is unavailable", failure);
+        }
     }
 
     public HeartbeatLease heartbeat(
@@ -234,6 +274,17 @@ public class ControlPlaneClient implements ExecutionJwkProvider {
 
     private String apiToken() {
         return tokens.accessToken(audience, "");
+    }
+
+    private static RestClient configuredClient(RestClient.Builder builder, String baseUrl) {
+        var httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        var requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        return builder.requestFactory(requestFactory)
+                .baseUrl(requireText(baseUrl, "baseUrl"))
+                .build();
     }
 
     private static String requireText(String value, String field) {
