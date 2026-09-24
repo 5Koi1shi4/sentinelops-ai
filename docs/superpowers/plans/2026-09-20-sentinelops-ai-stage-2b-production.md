@@ -317,6 +317,7 @@ git commit -m "feat: harden execution leases and fencing"
 
 **Files:**
 - Modify: `apps/ops-executor/pom.xml`
+- Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/adapter/ProductionAdapterConfiguration.java`
 - Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/adapter/http/HttpActionCatalog.java`
 - Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/adapter/http/ProductionHttpRunbookAdapter.java`
 - Create: `apps/ops-executor/src/main/java/io/sentinelops/executor/adapter/kubernetes/KubernetesTargetCatalog.java`
@@ -325,6 +326,7 @@ git commit -m "feat: harden execution leases and fencing"
 - Create: `apps/ops-executor/src/test/java/io/sentinelops/executor/adapter/http/ProductionHttpRunbookAdapterTest.java`
 - Create: `apps/ops-executor/src/test/java/io/sentinelops/executor/adapter/kubernetes/KubernetesRunbookAdapterTest.java`
 - Create: `apps/ops-executor/src/test/java/io/sentinelops/executor/adapter/AdapterContractTest.java`
+- Create: `apps/ops-executor/src/test/java/io/sentinelops/executor/adapter/ProductionAdapterConfigurationTest.java`
 - Create: `deploy/kubernetes/executor-rbac.yaml`
 - Create: `docs/runbooks/adapter-security.md`
 
@@ -333,7 +335,7 @@ git commit -m "feat: harden execution leases and fencing"
 - Produces: Kubernetes operations `restart_deployment` and `scale_deployment` within target/min/max constraints; no generic patch/delete/exec API.
 - Consumes: verified ticket, immutable Runbook step, configured target alias and service-account identity.
 
-- [ ] **Step 1: Write failing adapter contract and attack tests**
+- [x] **Step 1: Write failing adapter contract and attack tests**
 
 ```java
 interface AdapterContractTest {
@@ -349,7 +351,7 @@ interface AdapterContractTest {
 @Test void targetNamespaceAndNameCannotComeFromModelParameter() {}
 ```
 
-- [ ] **Step 2: Run adapter tests and observe failure**
+- [x] **Step 2: Run adapter tests and observe failure**
 
 Run:
 
@@ -359,21 +361,21 @@ Run:
 
 Expected: FAIL because production adapters/catalogs are absent.
 
-- [ ] **Step 3: Add Fabric8 7.8.0 and immutable target catalogs**
+- [x] **Step 3: Add Fabric8 7.8.0 and immutable target catalogs**
 
-Add `io.fabric8:kubernetes-client:7.8.0` and its mock-server test artifact. Catalog entries are loaded from mounted read-only configuration and map aliases to scheme/host/path or cluster/namespace/kind/name plus allowed operations/bounds. Validate catalogs at startup; reject IP literals/private-network redirects for external HTTP targets unless explicitly registered. Disable redirects by default.
+Add `io.fabric8:kubernetes-client:7.8.0`, its mock-server test artifact, and Boot-managed Apache HttpClient5 for checked-address DNS pinning. Catalog entries are loaded from mounted read-only configuration and map aliases to scheme/host/path or cluster/namespace/kind/name plus allowed operations/bounds. Validate catalogs at startup; reject IP literals/private-network DNS answers for external HTTP targets unless explicitly registered. Disable redirects, proxies and automatic retries; treat a 3xx after dispatch as unknown outcome.
 
-- [ ] **Step 4: Implement exact operation-specific adapters**
+- [x] **Step 4: Implement exact operation-specific adapters**
 
 HTTP adapter uses configured method/path/body template and permits only typed substitutions defined by the action. Kubernetes restart patches only `spec.template.metadata.annotations['sentinelops.io/restarted-at']`; scale patches only `spec.replicas` within catalog bounds. Use resourceVersion preconditions, field manager `sentinelops-executor`, request timeout, and service account. Do not expose Fabric8 client objects to Runbook definitions.
 
 每个新适配器必须覆写三参数 `execute(step, context, beforeTransport)`：先校验签名步骤、目标、参数和本地凭据，再紧贴出站传输前调用 `beforeTransport`。接口默认实现不能保证生产适配器的这一顺序。只有目标的稳定幂等键与 fencing 契约经过测试，才能同时加入控制平面和 Executor 的重放白名单；其他步骤分发后结果未知时升级人工核对。
 
-- [ ] **Step 5: Create minimum Kubernetes RBAC and verify forbidden calls**
+- [x] **Step 5: Create minimum Kubernetes RBAC and verify forbidden calls**
 
 `executor-rbac.yaml` grants `get`, `patch`, and `update` on named `deployments` in the configured namespace; it does not grant pods/exec, secrets, delete, wildcard resources or cluster-wide scope. Use `resourceNames` where Kubernetes authorization supports it and document remaining namespace scoping.
 
-- [ ] **Step 6: Run adapter tests against MockWebServer/Fabric8 mock server**
+- [x] **Step 6: Run adapter tests against MockWebServer/Fabric8 mock server**
 
 Run:
 
@@ -383,7 +385,7 @@ Run:
 
 Expected: PASS; captured Kubernetes requests contain only allowed patch fields and HTTP tests prove redirect/host/parameter attacks are blocked.
 
-- [ ] **Step 7: Commit production adapters**
+- [x] **Step 7: Commit production adapters**
 
 ```powershell
 git add apps/ops-executor deploy/kubernetes docs/runbooks

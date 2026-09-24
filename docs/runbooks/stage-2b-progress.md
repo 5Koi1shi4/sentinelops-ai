@@ -28,6 +28,16 @@ V18 增加不可更新、不可删除的 `execution_attempt_event`，记录 `pre
 
 红—绿记录包括 `build/stage2b-task3-lease-red.log`、`build/stage2b-task3-journal-red.log`、`build/stage2b-task3-crash-red.log`、`build/stage2b-task3-executor-phase-red.log`、`build/stage2b-task3-heartbeat-red.log`、`build/stage2b-task3-ticket-expiry-red.log` 和 `build/stage2b-task3-revoked-unknown-red.log`。Java 21 完整回归为 API 385 项（按既有测试安排跳过 1 项）、Executor 37 项、Demo 13 项，零失败（`build/stage2b-task3-all-java-it-final.log`）；最后的审查修复又通过执行/租约 PostgreSQL 专项 23 项（`build/stage2b-task3-revoked-unknown-green.log`）。Valkey Stream 专项 3 项通过（`build/stage2b-task3-redis-consumer-green.log`）。只读审查发现的唯一 P2 已修复。
 
+## Task 4：生产 HTTP 与 Kubernetes Runbook 适配器（适配器范围已完成）
+
+Executor 增加启动时从只读 JSON 目录加载的 `production-http` 和 `kubernetes` 适配器。HTTP 仅按动作 key 选择固定 URL、方法、OAuth audience/scope 与扁平正文模板；参数有类型和边界，额外字段拒绝。外部 HTTPS 目标禁止 IP 字面量及私网 DNS 答案；连接固定到已检查的地址，并继续按目录主机名做 TLS 验证。客户端禁代理、重定向和自动重试，已分发后的 3xx、网络中断或暂时性响应按未知结果升级人工核对。生产 HTTP 目标只有自行验证并持久化稳定幂等键与 fencing token 后，才能考虑加入重放白名单；目前仍不自动重放。
+
+Kubernetes 只对目录登记集群、namespace 和名称的 Deployment 执行 `restart_deployment` 或有界 `scale_deployment`。JSON Patch 先测试 `resourceVersion`，然后仅写入重启时间注解或 `spec.replicas`；不暴露通用 patch/delete/exec。服务账号 token 与 CA 从 Pod 挂载读取，集群必须使用 HTTPS；客户端禁自动重试。RBAC 示例只对指定 namespace 的命名 Deployment 授予 get/patch/update。Kubernetes 没有目标端幂等/fencing 契约，未知结果不重放。配置格式、部署要求和剩余投运步骤见 [适配器安全手册](adapter-security.md)。
+
+红—绿记录：`build/stage2b-task4-adapter-red.log` 记录类缺失；`build/stage2b-task4-catalog-strict-red.log` 记录未知目录字段原本被忽略；`build/stage2b-task4-ip-range-red.log` 记录 IPv6 ULA/共享地址检查缺失；`build/stage2b-task4-review-red.log` 记录 3xx 与 Kubernetes HTTP 集群被错误接受；`build/stage2b-task4-dns-pin-red.log` 记录固定地址传输尚未实现。最终聚焦 17 项和 Executor Java 21 全量 54 项（含 Valkey Testcontainers 3 项）零失败，见 `build/stage2b-task4-review-first.log` 与 `build/stage2b-task4-executor-final.log`。RBAC YAML 使用本地解析器验证了资源名、namespace Role 与动词集合；没有实际 Kubernetes 集群可运行 `kubectl auth can-i`，该项须在部署环境复核。
+
+控制平面的 Runbook 发布定义目前仍只允许 Demo 操作。Task 4 交付的是生产适配器和安全目录，尚未构成可发布的端到端生产 Runbook；设计中的真实执行路径必须在 v1.0.0 总体验收前补齐发布白名单、真实健康验证与集成测试，不能通过直接改数据库绕过治理。
+
 ## 下一实施任务
 
-按计划开始 Task 4：生产 HTTP 与 Kubernetes Runbook 适配器及严格白名单。
+按计划开始 Task 5：隐私安全的 OpenTelemetry、业务指标与运维仪表板。
