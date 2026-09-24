@@ -10,7 +10,10 @@ import io.sentinelops.api.diagnosis.application.tool.ToolContext;
 import io.sentinelops.api.diagnosis.domain.*;
 import io.sentinelops.api.knowledge.application.*;
 import io.sentinelops.api.shared.problem.ApiProblemException;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
+import io.opentelemetry.api.OpenTelemetry;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +29,26 @@ class SpringAiModelGatewayTest {
              "runbookVersionId":null,"parameters":{},"riskLevel":"R0","expectedVerification":null}
             """;
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @Test void rejectedToolCallCountsOnlyRegisteredNameAndFiniteResult() {
+        var meters = new SimpleMeterRegistry();
+        var metrics = new BusinessMetrics(ObservationRegistry.NOOP, meters,
+                OpenTelemetry.noop());
+        var request = request(Duration.ofSeconds(90));
+        var config = new DiagnosisToolConfiguration(mock(EvidenceTools.class),
+                mock(KnowledgeSearch.class), mock(EmbeddingGateway.class),
+                mock(RunbookCatalog.class), mapper, metrics);
+        var callback = config.callbacks(request,
+                new DiagnosisToolConfiguration.BudgetState(request)).stream()
+                .filter(tool -> tool.getToolDefinition().name().equals("getEvidence"))
+                .findFirst().orElseThrow();
+
+        assertThatThrownBy(() -> callback.call("prompt-canary-81bafa", null))
+                .isInstanceOf(ApiProblemException.class);
+        assertThat(meters.counter("sentinelops.diagnosis.tool.results",
+                "tool", "getEvidence", "result", "rejected").count()).isEqualTo(1);
+        assertThat(meters.getMeters().toString()).doesNotContain("prompt-canary-81bafa");
+    }
 
     @Test void returnsStructuredProposalAndProviderMetadata() {
         var schema=com.networknt.schema.SchemaRegistry.withDefaultDialect(com.networknt.schema.SpecificationVersion.DRAFT_2020_12)

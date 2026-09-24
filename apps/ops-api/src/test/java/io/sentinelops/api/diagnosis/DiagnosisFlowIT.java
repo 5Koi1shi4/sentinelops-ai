@@ -22,6 +22,7 @@ import io.sentinelops.api.incident.application.IncidentApplicationService;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import io.sentinelops.api.support.PostgresIntegrationTest;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.math.BigDecimal;
@@ -50,6 +51,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
     @Autowired private JdbcClient jdbc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private WebApplicationContext webApplicationContext;
+    @Autowired private MeterRegistry meters;
     @MockitoSpyBean private io.sentinelops.api.diagnosis.application.model.ModelGateway diagnosisEngine;
 
     private MockMvc mockMvc;
@@ -63,6 +65,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
 
     @Test
     void diagnosesFromFrozenEvidenceAndReplaysWithoutDuplicatingHistory() throws Exception {
+        double validCitationsBefore = citationChecks("success");
         String suffix = UUID.randomUUID().toString();
         var incident = incidents.ingest(new AlertEnvelope(
                 "alertmanager",
@@ -107,6 +110,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(runEvidenceCount(first.diagnosisRunId())).isEqualTo(2);
         assertThat(proposalEvidenceCount(first.id())).isEqualTo(2);
         assertThat(diagnosisEventCount(incident.id())).isEqualTo(2);
+        assertThat(citationChecks("success") - validCitationsBefore).isEqualTo(1);
 
         var replayResult = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
                         .with(operator(incident.serviceId()))
@@ -120,6 +124,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(diagnosisRunCount(incident.id())).isOne();
         assertThat(proposalCount(incident.id())).isOne();
         assertThat(diagnosisEventCount(incident.id())).isEqualTo(2);
+        assertThat(citationChecks("success") - validCitationsBefore).isEqualTo(1);
 
         mockMvc.perform(get("/api/v1/incidents/{id}/evidence", incident.id())
                         .with(operator(incident.serviceId())))
@@ -134,6 +139,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
 
     @Test
     void rejectedProposalLeavesIncidentTriagingAndRecordsTypedFailure() throws Exception {
+        double failedCitationsBefore = citationChecks("failure");
         String suffix = UUID.randomUUID().toString();
         var incident = incidents.ingest(new AlertEnvelope(
                 "alertmanager",
@@ -180,6 +186,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
         assertThat(diagnosisRunStatus(incident.id())).isEqualTo("failed");
         assertThat(runEvidenceCount(diagnosisRunId(incident.id()))).isOne();
         assertThat(lastDiagnosisEvent(incident.id())).isEqualTo("diagnosis_validation_failed");
+        assertThat(citationChecks("failure") - failedCitationsBefore).isEqualTo(1);
 
         var failureReplay = mockMvc.perform(post("/api/v1/incidents/{id}/diagnosis-runs", incident.id())
                         .with(operator(incident.serviceId()))
@@ -187,6 +194,7 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
                         .header("Idempotency-Key", "invalid-diagnosis-" + suffix))
                 .andExpect(status().is(422))
                 .andReturn();
+        assertThat(citationChecks("failure") - failedCitationsBefore).isEqualTo(1);
         var firstFailureBody = objectMapper.readTree(
                 failureResult.getResponse().getContentAsString());
         var replayFailureBody = objectMapper.readTree(
@@ -478,5 +486,11 @@ class DiagnosisFlowIT extends PostgresIntegrationTest {
                 .param("id", incidentId)
                 .query(String.class)
                 .single();
+    }
+
+    private double citationChecks(String result) {
+        var counter = meters.find("sentinelops.diagnosis.citation.validation")
+                .tag("result", result).counter();
+        return counter == null ? 0 : counter.count();
     }
 }

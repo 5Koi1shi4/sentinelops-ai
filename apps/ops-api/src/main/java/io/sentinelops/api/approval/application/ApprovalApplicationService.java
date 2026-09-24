@@ -15,6 +15,7 @@ import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.shared.audit.AuditCommand;
 import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
@@ -23,12 +24,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -45,6 +49,7 @@ public class ApprovalApplicationService {
     private final UuidV7Generator ids;
     private final ObjectMapper objectMapper;
     private final AuditRecorder audit;
+    private final BusinessMetrics metrics;
 
     public ApprovalApplicationService(
             ApprovalStore store,
@@ -52,16 +57,33 @@ public class ApprovalApplicationService {
             IdempotencyService idempotency,
             UuidV7Generator ids,
             ObjectMapper objectMapper,
-            AuditRecorder audit) {
+            AuditRecorder audit,
+            BusinessMetrics metrics) {
         this.store = store;
         this.policy = policy;
         this.idempotency = idempotency;
         this.ids = ids;
         this.objectMapper = objectMapper;
         this.audit = audit;
+        this.metrics = metrics;
     }
 
     public ApprovalView request(
+            UUID incidentId,
+            UUID proposalId,
+            long expectedIncidentVersion,
+            String idempotencyKey,
+            RequestContext context) {
+        try (var span = metrics.start(BusinessMetrics.Operation.APPROVAL_REQUEST)
+                .incident(incidentId)) {
+            var view = requestStored(incidentId, proposalId, expectedIncidentVersion,
+                    idempotencyKey, context);
+            span.approval(view.id()).status(view.status().databaseValue()).success();
+            return view;
+        }
+    }
+
+    private ApprovalView requestStored(
             UUID incidentId,
             UUID proposalId,
             long expectedIncidentVersion,
@@ -78,6 +100,21 @@ public class ApprovalApplicationService {
     }
 
     public ApprovalView decide(
+            UUID requestId,
+            long expectedIncidentVersion,
+            String idempotencyKey,
+            DecisionCommand command,
+            RequestContext context) {
+        try (var span = metrics.start(BusinessMetrics.Operation.APPROVAL_DECIDE)
+                .approval(requestId)) {
+            var view = decideStored(requestId, expectedIncidentVersion,
+                    idempotencyKey, command, context);
+            span.incident(view.incidentId()).status(view.status().databaseValue()).success();
+            return view;
+        }
+    }
+
+    private ApprovalView decideStored(
             UUID requestId,
             long expectedIncidentVersion,
             String idempotencyKey,
@@ -169,6 +206,7 @@ public class ApprovalApplicationService {
                 "approval_requested", "approval_request", requestId.toString(), "success",
                 null, proposal.proposalHash(), null,
                 java.util.Map.of("status", "pending")));
+        afterCommit(metrics::approvalRequested);
 
         return response(
                 HttpStatus.CREATED,
@@ -300,6 +338,9 @@ public class ApprovalApplicationService {
                 request.proposalHash(), hash(command.decision() + ":" + requestVersion), null,
                 java.util.Map.of("decision", command.decision().name().toLowerCase(java.util.Locale.ROOT),
                         "status", nextStatus.databaseValue())));
+        var decisionStatus = nextStatus.databaseValue();
+        var latency = Duration.between(request.createdAt(), databaseNow);
+        afterCommit(() -> metrics.approvalDecision(decisionStatus, latency));
         return response(
                 HttpStatus.OK,
                 view(
@@ -470,6 +511,16 @@ public class ApprovalApplicationService {
             return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is required by the Java runtime", impossible);
+        }
+    }
+
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { action.run(); }
+            });
+        } else {
+            action.run();
         }
     }
 

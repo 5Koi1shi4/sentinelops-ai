@@ -4,6 +4,7 @@ import io.sentinelops.api.diagnosis.application.model.ModelDiagnosisRequest;
 import io.sentinelops.api.diagnosis.application.tool.EvidenceTools;
 import io.sentinelops.api.knowledge.application.*;
 import io.sentinelops.api.shared.problem.ApiProblemException;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.*;
@@ -21,9 +22,15 @@ public final class DiagnosisToolConfiguration {
     private final EmbeddingGateway embeddings;
     private final RunbookLookup runbooks;
     private final ObjectMapper mapper;
+    private final BusinessMetrics metrics;
     public DiagnosisToolConfiguration(EvidenceTools evidence, KnowledgeSearch search, EmbeddingGateway embeddings,
                                       RunbookLookup runbooks, ObjectMapper mapper) {
+        this(evidence, search, embeddings, runbooks, mapper, null);
+    }
+    public DiagnosisToolConfiguration(EvidenceTools evidence, KnowledgeSearch search, EmbeddingGateway embeddings,
+                                      RunbookLookup runbooks, ObjectMapper mapper, BusinessMetrics metrics) {
         this.evidence=evidence; this.search=search; this.embeddings=embeddings; this.runbooks=runbooks; this.mapper=mapper;
+        this.metrics=metrics;
     }
     public List<ToolCallback> callbacks(ModelDiagnosisRequest request, BudgetState budget) {
         var schemas = schemas();
@@ -41,10 +48,11 @@ public final class DiagnosisToolConfiguration {
             @Override public ToolDefinition getToolDefinition() { return definition; }
             @Override public String call(String input) { throw problem("TOOL_SCOPE_INVALID"); }
             @Override public String call(String input, org.springframework.ai.chat.model.ToolContext context) {
-                budget.take();
-                if (context==null || !request.toolContext().equals(context.getContext().get(SCOPE_KEY))) throw problem("TOOL_SCOPE_INVALID");
-                if (input==null || input.getBytes(StandardCharsets.UTF_8).length>8192) throw problem("TOOL_INPUT_INVALID");
+                String resultStatus="error";
                 try {
+                    budget.take();
+                    if (context==null || !request.toolContext().equals(context.getContext().get(SCOPE_KEY))) throw problem("TOOL_SCOPE_INVALID");
+                    if (input==null || input.getBytes(StandardCharsets.UTF_8).length>8192) throw problem("TOOL_INPUT_INVALID");
                     JsonNode args=mapper.readTree(input);
                     if (!args.isObject()) throw problem("TOOL_INPUT_INVALID");
                     Object result=switch(name) {
@@ -57,9 +65,11 @@ public final class DiagnosisToolConfiguration {
                     budget.check();
                     String output=mapper.writeValueAsString(Map.of("trust","UNTRUSTED_EXTERNAL_DATA","data",result));
                     if (output.getBytes(StandardCharsets.UTF_8).length>1_048_576) throw problem("TOOL_OUTPUT_LIMIT");
+                    resultStatus="success";
                     return output;
-                } catch (ApiProblemException known) { throw known; }
+                } catch (ApiProblemException known) { resultStatus="rejected"; throw known; }
                 catch (RuntimeException unsafe) { throw problem("TOOL_READ_FAILED"); }
+                finally { if (metrics!=null) metrics.toolResult(name,resultStatus); }
             }
         };
     }

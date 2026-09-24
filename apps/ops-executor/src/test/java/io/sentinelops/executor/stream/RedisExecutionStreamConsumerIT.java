@@ -18,6 +18,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.sentinelops.executor.controlplane.ControlPlaneClient;
 import io.sentinelops.executor.controlplane.ExecutorOAuth2TokenProvider;
 import io.sentinelops.executor.runbook.AuthorizedRunbookStep;
@@ -87,6 +88,21 @@ class RedisExecutionStreamConsumerIT {
     @BeforeEach
     void clearStream() {
         redis.delete(STREAM);
+    }
+
+    @Test
+    void reportsUndeliveredStreamLagFromTheConsumerGroup() {
+        var meters = new SimpleMeterRegistry();
+        var executor = new RedisExecutionStreamConsumer(
+                redis, mock(ExecutionMessageListener.class), STREAM, GROUP,
+                "lag-observer", Duration.ofMillis(5), 1, meters);
+        executor.initializeGroup();
+        addMessage(UUID.randomUUID(), UUID.randomUUID());
+        addMessage(UUID.randomUUID(), UUID.randomUUID());
+
+        assertThat(executor.pollOnce()).isEqualTo(1);
+        assertThat(meters.get("sentinelops.executor.stream.lag").gauge().value())
+                .isEqualTo(1);
     }
 
     @Test
@@ -428,6 +444,7 @@ class RedisExecutionStreamConsumerIT {
                 GROUP,
                 consumerId,
                 Duration.ofMillis(5),
-                10);
+                10,
+                new SimpleMeterRegistry());
     }
 }

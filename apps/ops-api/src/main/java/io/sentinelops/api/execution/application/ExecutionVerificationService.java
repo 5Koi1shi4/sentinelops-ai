@@ -11,6 +11,7 @@ import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.shared.audit.AuditCommand;
 import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +47,7 @@ public class ExecutionVerificationService {
     private final Duration maxDelay;
     private final boolean schedulerEnabled;
     private final String workerId;
+    private final BusinessMetrics metrics;
 
     public ExecutionVerificationService(
             VerificationStore store,
@@ -57,7 +59,8 @@ public class ExecutionVerificationService {
             @Value("${sentinelops.verification.max-delay:PT5S}") Duration maxDelay,
             @Value("${sentinelops.verification.scheduler-enabled:true}")
                     boolean schedulerEnabled,
-            @Value("${sentinelops.verification.worker-id:}") String configuredWorkerId) {
+            @Value("${sentinelops.verification.worker-id:}") String configuredWorkerId,
+            BusinessMetrics metrics) {
         this.store = Objects.requireNonNull(store, "store");
         this.probe = Objects.requireNonNull(probe, "probe");
         this.idempotency = Objects.requireNonNull(idempotency, "idempotency");
@@ -72,6 +75,7 @@ public class ExecutionVerificationService {
         this.workerId = configuredWorkerId == null || configuredWorkerId.isBlank()
                 ? "verifier-" + UUID.randomUUID()
                 : configuredWorkerId.trim();
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     public ManualVerificationView requestManual(
@@ -170,8 +174,17 @@ public class ExecutionVerificationService {
         if (claimed.isEmpty()) {
             return false;
         }
-        execute(claimed.orElseThrow());
-        return true;
+        var cycle = claimed.orElseThrow();
+        try (var span = metrics.start(BusinessMetrics.Operation.VERIFICATION_RUN)
+                .incident(cycle.incidentId()).execution(cycle.executionId())) {
+            var finalization = execute(cycle);
+            span.status(finalization.status().databaseValue()).success();
+            if (finalization.applied()) {
+                metrics.verificationOutcome(finalization.status().databaseValue());
+                metrics.incidentMttr(finalization.mttr());
+            }
+            return true;
+        }
     }
 
     @Scheduled(fixedDelayString = "${sentinelops.verification.poll-interval:PT1S}")
@@ -188,7 +201,7 @@ public class ExecutionVerificationService {
         }
     }
 
-    private void execute(ClaimedCycle cycle) {
+    private VerificationStore.Finalization execute(ClaimedCycle cycle) {
         boolean successful = cycle.alreadySucceeded();
         int finalAttempt = cycle.completedAttempts();
         var specification = new VerificationProbe.VerificationSpec(
@@ -229,7 +242,7 @@ public class ExecutionVerificationService {
                 .put("probe", cycle.probe())
                 .put("attempts", finalAttempt)
                 .put("successful", successful);
-        store.finalizeCycle(
+        return store.finalizeCycle(
                 cycle.id(),
                 cycle.claimToken(),
                 workerId,

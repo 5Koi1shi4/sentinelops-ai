@@ -38,6 +38,12 @@ Kubernetes 只对目录登记集群、namespace 和名称的 Deployment 执行 `
 
 控制平面的 Runbook 发布定义目前仍只允许 Demo 操作。Task 4 交付的是生产适配器和安全目录，尚未构成可发布的端到端生产 Runbook；设计中的真实执行路径必须在 v1.0.0 总体验收前补齐发布白名单、真实健康验证与集成测试，不能通过直接改数据库绕过治理。
 
-## 下一实施任务
+## Task 5：隐私安全遥测与运维仪表板（已完成）
 
-按计划开始 Task 5：隐私安全的 OpenTelemetry、业务指标与运维仪表板。
+Task 5 已实现隐私安全的 OpenTelemetry 业务跨度/日志/指标、Collector/Tempo/Grafana 本地栈和三个仪表板，运行与关联约束见 [可观测性运行手册](observability.md)。遥测测试使用真实 PostgreSQL 17 和内存 OTel 导出器注入敏感 canary，核验正文不进入跨度、标签或日志；引用有效性、幂等重放、回滚计数、租约与 fencing 冲突、Executor Stream lag 及适配器跨度均有专项验证。
+
+真实栈核查发现 OTLP Timer 导出为毫秒指标以及 Demo 签名来源别名未计入 MTTD；仪表板查询与 MTTD 逻辑修复分别经真实 Prometheus 指标名和红—绿 PostgreSQL 测试验证。Grafana 13.2.2 三个数据源健康，三个仪表板加载，24 条 PromQL 在真实 Prometheus 中解析成功；Collector 在闭环期间无导出错误。另向隔离栈发送一条新 HMAC 签名 v4 告警得到 HTTP 202，Prometheus 中 MTTD count=1、sum 约 60.17 秒。首次复跑浏览器测试因沿用已完成事故的数据卷而超时；重置本任务专用卷后通过。
+
+原计划要求从 webhook 经人工审批直到验证组成一条 trace，与异步审批和定时验证的实际边界不符。设计与计划现明确采用跨 trace 关联：Outbox 保存经校验的 W3C `traceparent`，Stream 传递该上下文，Executor 建立独立 trace 并通过 Span Link 指向创建执行的跨度；定时验证以 execution UUID 关联。真实栈校验 `build/stage2b-task5-trace-runtime-check-final.log` 为 PASS，确认创建跨度、Stream 消息、Executor 消息/适配器/API 领取及完成跨度、Span Link 和独立验证 trace。隐私 canary、传播边界及 Executor 轮询父跨度问题均经过红—绿测试。只读复审无阻断或高优先级问题；校验脚本仅扫描最近 100 条 Stream 记录，在极高并发下可能误报未找到。
+
+最终 Java 21 全 reactor 回归见 `build/stage2b-task5-all-java-it-final.log`：API 397 项（按既有安排跳过 1 项）、Executor 58 项、Demo 13 项，零失败。计划指定的三模块遥测门禁见 `build/stage2b-task5-plan-gate-final.log`，构建成功；最终隔离栈真实浏览器闭环见 `build/stage2b-task5-trace-e2e-final.log`，1 项通过。Task 5 完成后按用户要求暂停；Task 6–8 尚未开始。

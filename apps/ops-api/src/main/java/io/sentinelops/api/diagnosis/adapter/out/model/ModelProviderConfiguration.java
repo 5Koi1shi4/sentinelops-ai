@@ -8,6 +8,7 @@ import io.sentinelops.api.diagnosis.application.tool.EvidenceTools;
 import io.sentinelops.api.incident.application.evidence.*;
 import io.sentinelops.api.knowledge.application.*;
 import io.sentinelops.api.shared.problem.ApiProblemException;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import java.net.URI;
 import java.time.Duration;
 import java.util.*;
@@ -33,8 +34,8 @@ public class ModelProviderConfiguration {
         return new EvidenceTools(capture,new EvidenceBudget(200,128*1024,Duration.ofMinutes(15)));
     }
     @Bean DiagnosisToolConfiguration diagnosisTools(EvidenceTools evidence, KnowledgeSearch search,
-            EmbeddingGateway embeddings,RunbookCatalog catalog,ObjectMapper mapper) {
-        return new DiagnosisToolConfiguration(evidence,search,embeddings,catalog,mapper);
+            EmbeddingGateway embeddings,RunbookCatalog catalog,ObjectMapper mapper,BusinessMetrics metrics) {
+        return new DiagnosisToolConfiguration(evidence,search,embeddings,catalog,mapper,metrics);
     }
     @Bean DiagnosisEngine diagnosisEngine(ModelGateway gateway) { return new ModelBackedDiagnosisEngine(gateway); }
     @Bean ModelGateway modelGateway(ProviderSettings settings, RunbookCatalog catalog, DiagnosisToolConfiguration tools,
@@ -45,7 +46,8 @@ public class ModelProviderConfiguration {
     }
 
     @Bean ModelGatewayFactory modelGatewayFactory(ProviderSettings settings, EmbeddingGateway embeddings,
-            ToolCallingManager manager, ObservationRegistry observations, ObjectMapper mapper, Environment environment) {
+            ToolCallingManager manager, ObservationRegistry observations, ObjectMapper mapper, Environment environment,
+            BusinessMetrics metrics) {
         String prompt;
         try { prompt=new org.springframework.core.io.ClassPathResource("prompts/diagnosis-system-v1.st")
                 .getContentAsString(java.nio.charset.StandardCharsets.UTF_8); }
@@ -66,7 +68,7 @@ public class ModelProviderConfiguration {
             @Override public Session open(EvidenceCapture evidence, RunbookLookup catalog, KnowledgeSearch search) {
                 var evidenceTools = new EvidenceTools(evidence,
                         new EvidenceBudget(200, 128*1024, Duration.ofMinutes(15)));
-                var callbacks = new DiagnosisToolConfiguration(evidenceTools, search, embeddings, catalog, mapper);
+                var callbacks = new DiagnosisToolConfiguration(evidenceTools, search, embeddings, catalog, mapper, metrics);
                 return new Session(createGateway(settings, catalog, callbacks, evidenceTools,
                         manager, observations, mapper, environment, false));
             }

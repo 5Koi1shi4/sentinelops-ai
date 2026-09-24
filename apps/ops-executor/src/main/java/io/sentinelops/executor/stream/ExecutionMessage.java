@@ -5,7 +5,12 @@ import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.redis.connection.stream.MapRecord;
 
-public record ExecutionMessage(String recordId, UUID eventId, UUID executionId) {
+public record ExecutionMessage(
+        String recordId, UUID eventId, UUID executionId, String traceparent) {
+
+    public ExecutionMessage(String recordId, UUID eventId, UUID executionId) {
+        this(recordId, eventId, executionId, null);
+    }
 
     public ExecutionMessage {
         if (recordId == null || recordId.isBlank()) {
@@ -21,7 +26,13 @@ public record ExecutionMessage(String recordId, UUID eventId, UUID executionId) 
         return new ExecutionMessage(
                 record.getId().getValue(),
                 UUID.fromString(required(values, "eventId")),
-                UUID.fromString(required(values, "executionId")));
+                UUID.fromString(required(values, "executionId")),
+                optional(values, "traceparent"));
+    }
+
+    private static String optional(Map<Object, Object> values, String field) {
+        var value = values.get(field);
+        return value == null ? null : value.toString();
     }
 
     private static String required(Map<Object, Object> values, String field) {

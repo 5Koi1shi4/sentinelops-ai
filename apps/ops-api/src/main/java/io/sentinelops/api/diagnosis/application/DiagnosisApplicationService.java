@@ -15,10 +15,12 @@ import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
 import io.sentinelops.api.knowledge.application.RunbookCatalog;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import io.sentinelops.api.shared.time.TimeProvider;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
@@ -45,6 +47,7 @@ public class DiagnosisApplicationService {
     private final UuidV7Generator ids;
     private final TimeProvider time;
     private final ObjectMapper objectMapper;
+    private final BusinessMetrics metrics;
 
     public DiagnosisApplicationService(
             DiagnosisStore store,
@@ -56,7 +59,8 @@ public class DiagnosisApplicationService {
             PlatformTransactionManager transactionManager,
             UuidV7Generator ids,
             TimeProvider time,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            BusinessMetrics metrics) {
         this.store = store;
         this.engine = engine;
         this.policy = policy;
@@ -67,6 +71,7 @@ public class DiagnosisApplicationService {
         this.ids = ids;
         this.time = time;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public DiagnosisProposal diagnose(
@@ -75,6 +80,24 @@ public class DiagnosisApplicationService {
             String idempotencyKey,
             CurrentPrincipal principal,
             UUID principalId) {
+        long started = System.nanoTime();
+        try (var span = metrics.start(BusinessMetrics.Operation.DIAGNOSIS_RUN)
+                .incident(incidentId)) {
+            var proposal = diagnoseStored(incidentId, expectedVersion, idempotencyKey,
+                    principal, principalId, started);
+            span.diagnosisRun(proposal.diagnosisRunId())
+                    .risk(proposal.riskLevel().databaseValue()).success();
+            return proposal;
+        }
+    }
+
+    private DiagnosisProposal diagnoseStored(
+            UUID incidentId,
+            long expectedVersion,
+            String idempotencyKey,
+            CurrentPrincipal principal,
+            UUID principalId,
+            long started) {
         if (expectedVersion < 0) {
             throw new IllegalArgumentException("If-Match version must not be negative");
         }
@@ -86,27 +109,48 @@ public class DiagnosisApplicationService {
         }
         var phase = transactions.execute(status -> claim(incidentId, expectedVersion, idempotencyKey, principal, principalId));
         IdempotencyService.Response response = phase.replay();
-        if (response == null) {
-            ModelDiagnosisResult draft = null;
-            ApiProblemException failure = null;
-            try { draft = engine.diagnoseWithMetadata(phase.context()); }
-            catch (ApiProblemException known) { failure = known; }
-            catch (RuntimeException unsafe) {
-                failure = new ApiProblemException(HttpStatus.BAD_GATEWAY, "AI_PROVIDER_FAILED", "Diagnosis provider failed.");
+        boolean fresh = response == null;
+        try {
+            if (fresh) {
+                ModelDiagnosisResult draft = null;
+                ApiProblemException failure = null;
+                try { draft = engine.diagnoseWithMetadata(phase.context()); }
+                catch (ApiProblemException known) { failure = known; }
+                catch (RuntimeException unsafe) {
+                    failure = new ApiProblemException(HttpStatus.BAD_GATEWAY, "AI_PROVIDER_FAILED", "Diagnosis provider failed.");
+                }
+                if (draft != null) {
+                    metrics.aiTokens(draft.provider(), draft.modelName(),
+                            draft.inputTokens(), draft.outputTokens());
+                }
+                var result = draft;
+                var problem = failure;
+                response = transactions.execute(status -> finish(phase, result, problem, expectedVersion, principal));
             }
-            var result = draft;
-            var problem = failure;
-            response = transactions.execute(status -> finish(phase, result, problem, expectedVersion, principal));
-        }
 
-        if (response.status() != HttpStatus.CREATED.value()) {
-            throw new ApiProblemException(
-                    HttpStatus.valueOf(response.status()),
-                    response.body().path("errorCode").asString("diagnosis_failed"),
-                    response.body().path("detail").asString("Diagnosis validation failed."));
+            if (response.status() != HttpStatus.CREATED.value()) {
+                throw new ApiProblemException(
+                        HttpStatus.valueOf(response.status()),
+                        response.body().path("errorCode").asString("diagnosis_failed"),
+                        response.body().path("detail").asString("Diagnosis validation failed."));
+            }
+            var proposal = objectMapper.readValue(
+                    objectMapper.writeValueAsString(response.body()), DiagnosisProposal.class);
+            if (fresh) {
+                int citations = (int) proposal.hypotheses().stream()
+                        .flatMap(hypothesis -> hypothesis.evidenceRefs().stream())
+                        .distinct().count();
+                metrics.diagnosisCompleted("success", proposal.riskLevel().databaseValue(),
+                        Duration.ofNanos(System.nanoTime() - started), citations);
+            }
+            return proposal;
+        } catch (RuntimeException failure) {
+            if (fresh) {
+                metrics.diagnosisCompleted("error", "unknown",
+                        Duration.ofNanos(System.nanoTime() - started), 0);
+            }
+            throw failure;
         }
-        return objectMapper.readValue(
-                objectMapper.writeValueAsString(response.body()), DiagnosisProposal.class);
     }
 
     private Phase claim(
@@ -227,6 +271,9 @@ public class DiagnosisApplicationService {
                     ? null
                     : runbooks.lockVersion(draft.runbookVersionId()).orElse(null);
             var validated = policy.validate(draft, context, runbook);
+            if (!validated.hypotheses().isEmpty()) {
+                metrics.citationValidation("success");
+            }
             String proposalHash = proposalHasher.hash(validated);
             UUID proposalId = ids.generate();
             var createdAt = time.now();
@@ -307,6 +354,9 @@ public class DiagnosisApplicationService {
             String principalKey,
             ApiProblemException failure,
             java.time.Instant failedAt) {
+        if (failure.errorCode().startsWith("EVIDENCE_REFERENCE_")) {
+            metrics.citationValidation("failure");
+        }
         store.completeRun(runId, "failed", failure.errorCode(), failedAt);
         long sequence = store.allocateEvent(incidentId, failedAt);
         var payload = objectMapper.createObjectNode()

@@ -435,7 +435,7 @@ Executor 的正式结果回报必须先有对应尝试的阶段记录；控制�
 - Spring Actuator liveness/readiness；
 - Micrometer 指标；
 - OpenTelemetry trace、metric 和结构化日志；
-- 统一传播 `traceId`、`incidentId`、`diagnosisRunId`、`approvalId` 和 `executionId`；
+- 同步调用传播 `traceId`，异步 Outbox/Stream 传递受限 W3C trace context 并在消费跨度建立 Span Link；跨人工审批的独立 trace 使用 `incidentId`、`diagnosisRunId`、`approvalId` 和 `executionId` 关联；
 - 前端错误和 Web Vitals 不包含敏感业务 payload。
 
 ### 15.2 业务指标

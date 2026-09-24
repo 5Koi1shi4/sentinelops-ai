@@ -90,14 +90,16 @@ public class OutboxStore {
                             last_error = null
                         from candidates c
                         where o.id = c.id
-                        returning o.id, o.aggregate_id, o.publish_attempts
+                        returning o.id, o.aggregate_id, o.publish_attempts,
+                                  o.payload->>'traceparent' as traceparent
                         """)
                 .param("relayId", relayId)
                 .param("batchSize", batchSize)
                 .query((resultSet, rowNumber) -> new ClaimedOutboxRecord(
                         resultSet.getObject("id", UUID.class),
                         resultSet.getObject("aggregate_id", UUID.class),
-                        resultSet.getInt("publish_attempts")))
+                        resultSet.getInt("publish_attempts"),
+                        resultSet.getString("traceparent")))
                 .list();
     }
 
@@ -190,5 +192,6 @@ public class OutboxStore {
 
     public record OutboxRecord(UUID id, String eventType, String payloadJson, Instant createdAt) {}
 
-    public record ClaimedOutboxRecord(UUID eventId, UUID executionId, int publishAttempts) {}
+    public record ClaimedOutboxRecord(
+            UUID eventId, UUID executionId, int publishAttempts, String traceparent) {}
 }

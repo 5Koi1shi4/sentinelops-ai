@@ -2,6 +2,7 @@ package io.sentinelops.api.execution.adapter.out.persistence;
 
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -387,7 +388,7 @@ public class VerificationStore {
                 .orElseThrow(() -> new OptimisticLockingFailureException(
                         "Verification cycle lease is stale"));
         var incident = jdbc.sql("""
-                        select status, version
+                        select status, version, opened_at
                         from incident
                         where id = :incidentId
                         for update
@@ -395,7 +396,8 @@ public class VerificationStore {
                 .param("incidentId", cycle.incidentId())
                 .query((resultSet, rowNumber) -> new IncidentVersion(
                         IncidentStatus.fromDatabase(resultSet.getString("status")),
-                        resultSet.getLong("version")))
+                        resultSet.getLong("version"),
+                        resultSet.getObject("opened_at", OffsetDateTime.class).toInstant()))
                 .single();
         Instant completedAt = jdbc.sql("select clock_timestamp()")
                 .query(OffsetDateTime.class)
@@ -408,7 +410,7 @@ public class VerificationStore {
                 enqueueReplacementCycle(
                         cycleId, replacementCycleId, incident.version(), completedAt);
             }
-            return new Finalization(false, incident.status(), incident.version());
+            return new Finalization(false, incident.status(), incident.version(), null);
         }
 
         int priorFailedCycles = jdbc.sql("""
@@ -474,7 +476,9 @@ public class VerificationStore {
                 "sentinelops-verifier",
                 eventPayloadJson,
                 completedAt);
-        return new Finalization(true, target, transition.version());
+        return new Finalization(true, target, transition.version(),
+                target == IncidentStatus.RESOLVED
+                        ? Duration.between(incident.openedAt(), completedAt) : null);
     }
 
     private void completeCycle(UUID cycleId, String status, Instant completedAt) {
@@ -568,7 +572,8 @@ public class VerificationStore {
             int completedAttempts,
             boolean alreadySucceeded) {}
 
-    public record Finalization(boolean applied, IncidentStatus status, long incidentVersion) {}
+    public record Finalization(
+            boolean applied, IncidentStatus status, long incidentVersion, Duration mttr) {}
 
     private record FinalizationContext(
             UUID id,
@@ -576,5 +581,5 @@ public class VerificationStore {
             long incidentVersion,
             UUID executionId) {}
 
-    private record IncidentVersion(IncidentStatus status, long version) {}
+    private record IncidentVersion(IncidentStatus status, long version, Instant openedAt) {}
 }

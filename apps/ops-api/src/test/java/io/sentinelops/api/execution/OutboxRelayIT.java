@@ -2,6 +2,7 @@ package io.sentinelops.api.execution;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
@@ -101,12 +102,12 @@ class OutboxRelayIT extends PostgresIntegrationTest {
         var stream = mock(ExecutionStreamPublisher.class);
         doAnswer(invocation -> {
                     if (failedEvent.equals(invocation.getArgument(0, UUID.class))) {
-                        throw new IllegalStateException("valkey unavailable with a very long detail");
+                        throw new IllegalStateException("valkey unavailable with ticket-canary-9d645d");
                     }
                     return null;
                 })
                 .when(stream)
-                .publish(any(UUID.class), any(UUID.class));
+                .publish(any(UUID.class), any(UUID.class), nullable(String.class));
         var relay = new OutboxRelay(
                 store,
                 stream,
@@ -127,6 +128,7 @@ class OutboxRelayIT extends PostgresIntegrationTest {
         assertThat(failed.published()).isFalse();
         assertThat(failed.claimedBy()).isNull();
         assertThat(failed.lastError()).contains("IllegalStateException");
+        assertThat(failed.lastError()).doesNotContain("ticket-canary-9d645d");
         assertThat(failed.lastError().length()).isLessThanOrEqualTo(256);
         assertThat(failed.nextAttemptAt()).isAfter(Instant.now().minusSeconds(1));
         assertThat(failed.quarantined()).isFalse();
@@ -148,6 +150,42 @@ class OutboxRelayIT extends PostgresIntegrationTest {
     }
 
     @Test
+    void relayCarriesOnlyValidatedTraceparentThroughDurableOutbox() {
+        UUID eventId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        String traceparent = "00-11111111111111111111111111111111-2222222222222222-03";
+        store.insert(eventId, executionId, "execution.requested.v1",
+                "{\"eventId\":\"" + eventId + "\",\"executionId\":\""
+                        + executionId + "\",\"traceparent\":\"" + traceparent
+                        + "\",\"bearer\":\"bearer-canary\"}", Instant.now());
+        var relay = new OutboxRelay(store, publisher, new SimpleMeterRegistry(),
+                "relay-trace", 1, 256, Duration.ofSeconds(1), Duration.ofMinutes(5), 20);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+
+        var records = redis.opsForStream().range(STREAM, Range.unbounded());
+        assertThat(records).hasSize(1);
+        assertThat(records.getFirst().getValue())
+                .containsEntry("traceparent", traceparent)
+                .doesNotContainKey("bearer");
+    }
+
+    @Test
+    void malformedTraceContextIsDiscardedWithoutBlockingExecutionDelivery() {
+        UUID eventId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
+        store.insert(eventId, executionId, "execution.requested.v1",
+                "{\"eventId\":\"" + eventId + "\",\"executionId\":\""
+                        + executionId + "\",\"traceparent\":\"bearer-canary\"}", Instant.now());
+        var relay = new OutboxRelay(store, publisher, new SimpleMeterRegistry(),
+                "relay-invalid-trace", 1, 256, Duration.ofSeconds(1), Duration.ofMinutes(5), 20);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        assertThat(redis.opsForStream().range(STREAM, Range.unbounded()).getFirst().getValue())
+                .doesNotContainKey("traceparent");
+    }
+
+    @Test
     void failedRowsDoNotStarveNewOutboxEvents() {
         var eventIds = new ArrayList<UUID>();
         Instant createdAt = Instant.parse("2026-09-20T10:00:00Z");
@@ -161,7 +199,7 @@ class OutboxRelayIT extends PostgresIntegrationTest {
                     throw new IllegalStateException("valkey unavailable");
                 })
                 .when(unavailableStream)
-                .publish(any(UUID.class), any(UUID.class));
+                .publish(any(UUID.class), any(UUID.class), nullable(String.class));
         var relay = new OutboxRelay(
                 store,
                 unavailableStream,
@@ -189,7 +227,7 @@ class OutboxRelayIT extends PostgresIntegrationTest {
                     throw new IllegalStateException("invalid stream record");
                 })
                 .when(unavailableStream)
-                .publish(any(UUID.class), any(UUID.class));
+                .publish(any(UUID.class), any(UUID.class), nullable(String.class));
         var meters = new SimpleMeterRegistry();
         var relay = new OutboxRelay(
                 store,

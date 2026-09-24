@@ -1,5 +1,7 @@
 package io.sentinelops.executor.stream;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -7,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +45,7 @@ public class RedisExecutionStreamConsumer {
     private final Duration reclaimIdle;
     private final int batchSize;
     private final AtomicBoolean groupReady = new AtomicBoolean();
+    private final AtomicReference<Double> streamLag = new AtomicReference<>(Double.NaN);
 
     public RedisExecutionStreamConsumer(
             StringRedisTemplate redis,
@@ -50,7 +54,8 @@ public class RedisExecutionStreamConsumer {
             @Value("${sentinelops.executor.consumer-group}") String group,
             @Value("${sentinelops.executor.id:}") String consumerId,
             @Value("${sentinelops.executor.reclaim-idle:PT35S}") Duration reclaimIdle,
-            @Value("${sentinelops.executor.batch-size:10}") int batchSize) {
+            @Value("${sentinelops.executor.batch-size:10}") int batchSize,
+            MeterRegistry meters) {
         this.redis = java.util.Objects.requireNonNull(redis, "redis");
         this.listener = java.util.Objects.requireNonNull(listener, "listener");
         this.stream = requireText(stream, "stream");
@@ -66,6 +71,9 @@ public class RedisExecutionStreamConsumer {
             throw new IllegalArgumentException("batchSize must be between 1 and 100");
         }
         this.batchSize = batchSize;
+        Gauge.builder("sentinelops.executor.stream.lag", streamLag, AtomicReference::get)
+                .description("Undelivered Stream records for the executor consumer group")
+                .register(java.util.Objects.requireNonNull(meters, "meters"));
     }
 
     @PostConstruct
@@ -86,12 +94,28 @@ public class RedisExecutionStreamConsumer {
                 records.addAll(fresh);
             }
             records.forEach(this::process);
+            refreshLag();
             return records.size();
         } catch (DataAccessException unavailable) {
             groupReady.set(false);
+            streamLag.set(Double.NaN);
             LOGGER.warn("Execution Stream polling failed errorType={}",
                     unavailable.getClass().getSimpleName());
             return 0;
+        }
+    }
+
+    private void refreshLag() {
+        try {
+            streamLag.set(redis.opsForStream().groups(stream).stream()
+                    .filter(info -> group.equals(info.groupName()))
+                    .map(info -> info.getRaw().get("lag"))
+                    .filter(Number.class::isInstance)
+                    .map(Number.class::cast)
+                    .map(Number::doubleValue)
+                    .findFirst().orElse(Double.NaN));
+        } catch (DataAccessException unavailable) {
+            streamLag.set(Double.NaN);
         }
     }
 

@@ -1,0 +1,121 @@
+{
+  "uid": "sentinelops-ai-quality",
+  "title": "SentinelOps AI Quality",
+  "description": "Diagnosis outcomes, citation quality, duration, and token use.",
+  "tags": ["sentinelops", "ai", "quality"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "30s",
+  "links": [
+    {
+      "title": "Explore traces in Tempo",
+      "type": "link",
+      "url": "/explore?left=%7B%22datasource%22%3A%22tempo%22%7D",
+      "targetBlank": true,
+      "keepTime": true
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Diagnosis completions by result and risk",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (result, risk) (rate(sentinelops_diagnosis_completed_total[$__rate_interval]))", "legendFormat": "{{result}} / {{risk}}", "range": true }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Citation checks by result",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (result) (rate(sentinelops_diagnosis_citation_validation_total[$__rate_interval]))", "legendFormat": "{{result}}", "range": true }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Average diagnosis duration",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "hidden", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(sentinelops_diagnosis_duration_milliseconds_sum[$__rate_interval])) / sum(rate(sentinelops_diagnosis_duration_milliseconds_count[$__rate_interval])) / 1000", "legendFormat": "Average duration", "range": true }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "AI tokens by provider, model, and type",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (provider, model, type) (rate(sentinelops_ai_tokens_total[$__rate_interval]))", "legendFormat": "{{provider}} / {{model}} / {{type}}", "range": true }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Estimated AI cost (trusted pricing only)",
+      "description": "No data means a trusted pricing configuration is not available. This panel does not substitute zero for missing cost data.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(sentinelops_ai_cost_estimated_total[$__rate_interval]))", "legendFormat": "Estimated cost / second", "range": true }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Read tool outcomes",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (tool, result) (rate(sentinelops_diagnosis_tool_results_total[$__rate_interval]))", "legendFormat": "{{tool}} / {{result}}", "range": true }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Evidence source outcomes",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (source, result) (rate(sentinelops_evidence_milliseconds_count[$__rate_interval]))", "legendFormat": "{{source}} / {{result}}", "range": true }
+      ]
+    }
+  ]
+}

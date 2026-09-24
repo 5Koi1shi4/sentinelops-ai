@@ -8,6 +8,7 @@
             "shared :: id",
             "shared :: audit",
             "shared :: idempotency",
-            "shared :: problem"
+            "shared :: problem",
+            "shared :: observability"
         })
 package io.sentinelops.api.approval;

@@ -1,5 +1,12 @@
 package io.sentinelops.executor.stream;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.tracing.Tracer;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
 import io.sentinelops.executor.controlplane.ControlPlaneClient;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.AttemptReport;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.TerminalControlPlaneException;
@@ -18,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -28,6 +36,53 @@ public class ExecutionMessageListener {
     private final RunbookDispatcher dispatcher;
     private final ExecutionLeaseHeartbeat leaseHeartbeat;
     private final ExecutionMessageAcknowledger acknowledger;
+    private final ObservationRegistry observations;
+    private final io.opentelemetry.api.trace.Tracer tracer;
+    private final Tracer micrometerTracer;
+
+    @Autowired
+    public ExecutionMessageListener(
+            ControlPlaneClient controlPlane,
+            ExecutionTicketVerifier verifier,
+            RunbookDispatcher dispatcher,
+            ExecutionLeaseHeartbeat leaseHeartbeat,
+            ExecutionMessageAcknowledger acknowledger,
+            ObservationRegistry observations,
+            OpenTelemetry openTelemetry,
+            Tracer micrometerTracer) {
+        this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane");
+        this.verifier = Objects.requireNonNull(verifier, "verifier");
+        this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+        this.leaseHeartbeat = Objects.requireNonNull(leaseHeartbeat, "leaseHeartbeat");
+        this.acknowledger = Objects.requireNonNull(acknowledger, "acknowledger");
+        this.observations = Objects.requireNonNull(observations, "observations");
+        this.tracer = Objects.requireNonNull(openTelemetry, "openTelemetry")
+                .getTracer("io.sentinelops.executor.stream");
+        this.micrometerTracer = Objects.requireNonNull(micrometerTracer, "micrometerTracer");
+    }
+
+    public ExecutionMessageListener(
+            ControlPlaneClient controlPlane,
+            ExecutionTicketVerifier verifier,
+            RunbookDispatcher dispatcher,
+            ExecutionLeaseHeartbeat leaseHeartbeat,
+            ExecutionMessageAcknowledger acknowledger,
+            ObservationRegistry observations,
+            OpenTelemetry openTelemetry) {
+        this(controlPlane, verifier, dispatcher, leaseHeartbeat,
+                acknowledger, observations, openTelemetry, Tracer.NOOP);
+    }
+
+    public ExecutionMessageListener(
+            ControlPlaneClient controlPlane,
+            ExecutionTicketVerifier verifier,
+            RunbookDispatcher dispatcher,
+            ExecutionLeaseHeartbeat leaseHeartbeat,
+            ExecutionMessageAcknowledger acknowledger,
+            ObservationRegistry observations) {
+        this(controlPlane, verifier, dispatcher, leaseHeartbeat,
+                acknowledger, observations, OpenTelemetry.noop());
+    }
 
     public ExecutionMessageListener(
             ControlPlaneClient controlPlane,
@@ -35,15 +90,62 @@ public class ExecutionMessageListener {
             RunbookDispatcher dispatcher,
             ExecutionLeaseHeartbeat leaseHeartbeat,
             ExecutionMessageAcknowledger acknowledger) {
-        this.controlPlane = Objects.requireNonNull(controlPlane, "controlPlane");
-        this.verifier = Objects.requireNonNull(verifier, "verifier");
-        this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
-        this.leaseHeartbeat = Objects.requireNonNull(leaseHeartbeat, "leaseHeartbeat");
-        this.acknowledger = Objects.requireNonNull(acknowledger, "acknowledger");
+        this(controlPlane, verifier, dispatcher, leaseHeartbeat,
+                acknowledger, ObservationRegistry.NOOP);
     }
 
     public void onMessage(ExecutionMessage message) {
         Objects.requireNonNull(message, "message");
+        var builder = tracer.spanBuilder("sentinelops.executor.stream.consume").setNoParent();
+        var linkedParent = linkedParent(message.traceparent());
+        if (linkedParent != null) {
+            builder.addLink(linkedParent);
+        }
+        var streamSpan = builder.startSpan();
+        streamSpan.setAttribute("execution.id", message.executionId().toString());
+        var current = streamSpan.getSpanContext();
+        var tracingContext = micrometerTracer.traceContextBuilder()
+                .traceId(current.getTraceId())
+                .spanId(current.getSpanId())
+                .sampled(current.isSampled())
+                .build();
+        try (var streamScope = streamSpan.makeCurrent();
+                var bridgeScope = micrometerTracer.currentTraceContext().newScope(tracingContext)) {
+            onMessageInTrace(message);
+        } finally {
+            streamSpan.end();
+        }
+    }
+
+    private void onMessageInTrace(ExecutionMessage message) {
+        var observation = Observation.createNotStarted(
+                "sentinelops.executor.message", observations)
+                .highCardinalityKeyValue("execution.id", message.executionId().toString())
+                .start();
+        try (var scope = observation.openScope()) {
+            onMessageObserved(message);
+            observation.lowCardinalityKeyValue("result", "success");
+        } catch (RuntimeException failure) {
+            observation.lowCardinalityKeyValue("result", "error");
+            throw failure;
+        } finally {
+            observation.stop();
+        }
+    }
+
+    private static SpanContext linkedParent(String traceparent) {
+        if (traceparent == null || !traceparent.matches(
+                "00-(?!0{32})[0-9a-f]{32}-(?!0{16})[0-9a-f]{16}-[0-9a-f]{2}")) {
+            return null;
+        }
+        return SpanContext.createFromRemoteParent(
+                traceparent.substring(3, 35),
+                traceparent.substring(36, 52),
+                TraceFlags.fromHex(traceparent, 53),
+                TraceState.getDefault());
+    }
+
+    private void onMessageObserved(ExecutionMessage message) {
         String attemptId = UUID.randomUUID().toString();
         try {
             var claim = controlPlane.claim(

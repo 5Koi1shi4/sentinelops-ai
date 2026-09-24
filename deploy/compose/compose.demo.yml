@@ -39,6 +39,9 @@ services:
       SENTINELOPS_DEMO_ISSUER: http://localhost:8081/realms/sentinelops
       LOGGING_FILE_NAME: /var/log/sentinelops/demo-service.json
       LOGGING_STRUCTURED_FORMAT_FILE: logstash
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: sentinelops-demo-service
     volumes:
       - demo_logs:/var/log/sentinelops
     ports:
@@ -95,6 +98,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
+      - --web.enable-otlp-receiver
     volumes:
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../observability/alerts:/etc/prometheus/alerts:ro
@@ -135,16 +139,61 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.161.0
-    command: ["--config=/etc/otelcol/collector.yml"]
+    command: ["--config=/etc/otelcol/otel-collector.yml"]
     volumes:
-      - ../observability/otel-collector-stage2a.yml:/etc/otelcol/collector.yml:ro
+      - ../observability/otel-collector.yml:/etc/otelcol/otel-collector.yml:ro
       - demo_logs:/var/log/sentinelops:ro
     depends_on:
+      prometheus:
+        condition: service_started
       loki:
+        condition: service_started
+      tempo:
         condition: service_started
       demo-service:
         condition: service_healthy
     networks: [observability]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  tempo:
+    image: grafana/tempo:2.10.8
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ../observability/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    networks: [observability]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_SECURITY_ADMIN_USER: ${SENTINELOPS_GRAFANA_ADMIN_USER:-sentinelops-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${SENTINELOPS_GRAFANA_ADMIN_PASSWORD:-sentinelops-local-only-change-me}
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+    networks: [observability, edge]
     read_only: true
     tmpfs: [/tmp]
     restart: "no"
@@ -181,6 +230,10 @@ services:
       SENTINELOPS_EVIDENCE_MODE: real
       SENTINELOPS_PROMETHEUS_URL: http://prometheus:9090
       SENTINELOPS_LOKI_URL: http://loki:3100
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: sentinelops-api
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
     depends_on:
       keycloak:
         condition: service_healthy
@@ -193,6 +246,11 @@ services:
     networks: [control-plane, observability]
 
   ops-executor:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: sentinelops-executor
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
     depends_on:
       keycloak:
         condition: service_healthy
@@ -200,6 +258,9 @@ services:
         condition: service_healthy
       ops-api:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks: [control-plane, observability]
 
 networks:
   observability:
@@ -210,3 +271,5 @@ volumes:
   alertmanager_data:
   loki_data:
   demo_logs:
+  tempo_data:
+  grafana_data:

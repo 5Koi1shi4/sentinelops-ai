@@ -7,6 +7,7 @@ import io.sentinelops.api.diagnosis.adapter.out.model.ModelProviderConfiguration
 import io.sentinelops.api.diagnosis.application.DiagnosisEngine;
 import io.sentinelops.api.diagnosis.application.model.ModelGateway;
 import io.sentinelops.api.incident.application.evidence.EvidenceCaptureService;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.knowledge.application.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,6 +22,7 @@ class DiagnosisProviderConfigurationTest {
             .withBean(KnowledgeSearch.class,()->mock(KnowledgeSearch.class))
             .withBean(EvidenceCaptureService.class,()->mock(EvidenceCaptureService.class))
             .withBean(ObjectMapper.class,ObjectMapper::new)
+            .withBean(BusinessMetrics.class,()->mock(BusinessMetrics.class))
             .withBean(ObservationRegistry.class,()->ObservationRegistry.NOOP);
 
     @ParameterizedTest @ValueSource(strings={"deterministic","manual-only","openai-compatible","ollama"})

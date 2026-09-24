@@ -13,11 +13,22 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.tracing.handler.DefaultTracingObservationHandler;
+import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext;
+import io.micrometer.tracing.otel.bridge.OtelTracer;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.sentinelops.executor.controlplane.ControlPlaneClient;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.ClaimedExecution;
 import io.sentinelops.executor.controlplane.ControlPlaneClient.TerminalControlPlaneException;
 import io.sentinelops.executor.runbook.AuthorizedRunbookStep;
 import io.sentinelops.executor.runbook.ExecutionStepResult;
+import io.sentinelops.executor.runbook.IdempotencyContext;
 import io.sentinelops.executor.runbook.RunbookAdapter;
 import io.sentinelops.executor.runbook.RunbookDispatcher;
 import io.sentinelops.executor.stream.ExecutionMessage;
@@ -28,6 +39,7 @@ import io.sentinelops.executor.stream.ExecutionMessageListener;
 import io.sentinelops.executor.ticket.ExecutionTicketVerifier;
 import io.sentinelops.executor.ticket.InvalidExecutionTicket;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -70,6 +82,118 @@ class ExecutionMessageListenerTest {
                 new RunbookDispatcher(java.util.List.of(adapter)),
                 leaseHeartbeat,
                 acknowledger);
+    }
+
+    @Test
+    void streamMessageLinksToPersistedExecutionRequestTrace() {
+        var exporter = InMemorySpanExporter.create();
+        var provider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter)).build();
+        try {
+            var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+            var bridge = new OtelTracer(telemetry.getTracer("executor-test"),
+                    new OtelCurrentTraceContext(), event -> {});
+            var observations = ObservationRegistry.create();
+            observations.observationConfig().observationHandler(
+                    new DefaultTracingObservationHandler(bridge));
+            UUID executionId = UUID.randomUUID();
+            String traceId = "11111111111111111111111111111111";
+            String parentSpanId = "2222222222222222";
+            var message = new ExecutionMessage("1710000000010-0", UUID.randomUUID(),
+                    executionId, "00-" + traceId + "-" + parentSpanId + "-03");
+            when(controlPlane.claim(eq(executionId), any(String.class)))
+                    .thenThrow(new TerminalControlPlaneException(
+                            "execution_not_claimable", "already terminal"));
+            var instrumented = new ExecutionMessageListener(controlPlane, verifier,
+                    new RunbookDispatcher(java.util.List.of(adapter)), leaseHeartbeat,
+                    acknowledger, observations, telemetry, bridge);
+
+            var poll = Observation.createNotStarted("scheduled.poll", observations).start();
+            try (var scope = poll.openScope()) {
+                instrumented.onMessage(message);
+            } finally {
+                poll.stop();
+            }
+
+            var exported = exporter.getFinishedSpanItems();
+            var consume = exported.stream().filter(span -> span.getName()
+                    .equals("sentinelops.executor.stream.consume")).findFirst().orElseThrow();
+            var handled = exported.stream().filter(span -> span.getName()
+                    .equals("sentinelops.executor.message")).findFirst().orElseThrow();
+            assertThat(consume.getLinks()).hasSize(1);
+            assertThat(consume.getLinks().getFirst().getSpanContext().getTraceId())
+                    .isEqualTo(traceId);
+            assertThat(consume.getLinks().getFirst().getSpanContext().getSpanId())
+                    .isEqualTo(parentSpanId);
+            assertThat(consume.getLinks().getFirst().getSpanContext()
+                    .getTraceFlags().asHex()).isEqualTo("03");
+            assertThat(handled.getTraceId()).isEqualTo(consume.getTraceId());
+            assertThat(handled.getParentSpanId()).isEqualTo(consume.getSpanId());
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void registeredAdapterEmitsBoundedObservation() {
+        var observations = ObservationRegistry.create();
+        var stopped = new ArrayList<Observation.Context>();
+        observations.observationConfig().observationHandler(new ObservationHandler<>() {
+            @Override public boolean supportsContext(Observation.Context context) {
+                return true;
+            }
+            @Override public void onStop(Observation.Context context) {
+                stopped.add(context);
+            }
+        });
+        UUID executionId = UUID.randomUUID();
+        var step = authorizedStep(executionId);
+        var dispatcher = new RunbookDispatcher(java.util.List.of(adapter), observations);
+
+        assertThat(dispatcher.dispatch(step,
+                new IdempotencyContext(executionId, step.stepId(), step.fencingToken()),
+                () -> {})).isNotNull();
+
+        assertThat(stopped).hasSize(1);
+        assertThat(stopped.getFirst().getName()).isEqualTo("sentinelops.executor.adapter");
+        assertThat(stopped.getFirst().getLowCardinalityKeyValues())
+                .anySatisfy(attribute -> {
+                    assertThat(attribute.getKey()).isEqualTo("adapter");
+                    assertThat(attribute.getValue()).isEqualTo("demo-http");
+                });
+    }
+
+    @Test
+    void terminalMessageEmitsOnlyExecutionCorrelationAndFixedResult() {
+        var observations = ObservationRegistry.create();
+        var stopped = new ArrayList<Observation.Context>();
+        observations.observationConfig().observationHandler(new ObservationHandler<>() {
+            @Override public boolean supportsContext(Observation.Context context) {
+                return true;
+            }
+            @Override public void onStop(Observation.Context context) {
+                stopped.add(context);
+            }
+        });
+        var instrumented = new ExecutionMessageListener(controlPlane, verifier,
+                new RunbookDispatcher(java.util.List.of(adapter)), leaseHeartbeat,
+                acknowledger, observations);
+        UUID executionId = UUID.randomUUID();
+        var message = new ExecutionMessage("1710000000009-0", UUID.randomUUID(), executionId);
+        when(controlPlane.claim(eq(executionId), any(String.class)))
+                .thenThrow(new TerminalControlPlaneException(
+                        "execution_not_claimable", "ticket-canary-37941e"));
+
+        instrumented.onMessage(message);
+
+        assertThat(stopped).hasSize(1);
+        assertThat(stopped.getFirst().getName()).isEqualTo("sentinelops.executor.message");
+        assertThat(stopped.getFirst().getHighCardinalityKeyValues())
+                .anySatisfy(attribute -> {
+                    assertThat(attribute.getKey()).isEqualTo("execution.id");
+                    assertThat(attribute.getValue()).isEqualTo(executionId.toString());
+                });
+        assertThat(stopped.toString()).doesNotContain("ticket-canary-37941e");
     }
 
     @Test

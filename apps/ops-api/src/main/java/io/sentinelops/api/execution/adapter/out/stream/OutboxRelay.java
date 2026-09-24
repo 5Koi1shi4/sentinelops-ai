@@ -97,7 +97,7 @@ public class OutboxRelay {
         int publishedCount = 0;
         for (var row : store.claimBatch(relayId, batchSize)) {
             try {
-                publisher.publish(row.eventId(), row.executionId());
+                publisher.publish(row.eventId(), row.executionId(), row.traceparent());
                 if (!store.markPublished(row.eventId(), relayId)) {
                     throw new IllegalStateException("Outbox claim was lost before publication commit");
                 }
@@ -147,10 +147,7 @@ public class OutboxRelay {
     }
 
     private String safeError(RuntimeException failure) {
-        String message = failure.getMessage();
-        String value = failure.getClass().getSimpleName()
-                + (message == null || message.isBlank() ? "" : ": " + message);
-        value = value.replace('\r', ' ').replace('\n', ' ');
+        String value = failure.getClass().getSimpleName();
         return value.length() <= maxErrorLength ? value : value.substring(0, maxErrorLength);
     }
 

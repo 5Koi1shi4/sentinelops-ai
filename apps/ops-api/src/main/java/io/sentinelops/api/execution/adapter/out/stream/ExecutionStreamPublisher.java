@@ -1,6 +1,7 @@
 package io.sentinelops.api.execution.adapter.out.stream;
 
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,11 +26,20 @@ public class ExecutionStreamPublisher {
     }
 
     public void publish(UUID eventId, UUID executionId) {
+        publish(eventId, executionId, null);
+    }
+
+    public void publish(UUID eventId, UUID executionId, String traceparent) {
         Objects.requireNonNull(eventId, "eventId");
         Objects.requireNonNull(executionId, "executionId");
-        var record = StreamRecords.<String, String, String>mapBacked(Map.of(
-                        "eventId", eventId.toString(),
-                        "executionId", executionId.toString()))
+        Map<String, String> values = new HashMap<>();
+        values.put("eventId", eventId.toString());
+        values.put("executionId", executionId.toString());
+        if (traceparent != null && traceparent.matches(
+                "00-(?!0{32})[0-9a-f]{32}-(?!0{16})[0-9a-f]{16}-[0-9a-f]{2}")) {
+            values.put("traceparent", traceparent);
+        }
+        var record = StreamRecords.<String, String, String>mapBacked(values)
                 .withStreamKey(stream);
         if (redis.opsForStream().add(record) == null) {
             throw new IllegalStateException("Valkey did not return a Stream record ID");

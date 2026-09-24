@@ -16,10 +16,12 @@ import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.knowledge.domain.RiskLevel;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.shared.audit.AuditCommand;
 import io.sentinelops.api.shared.audit.AuditRecorder;
 import io.sentinelops.api.shared.idempotency.IdempotencyService;
 import io.sentinelops.api.shared.problem.ApiProblemException;
+import io.opentelemetry.api.trace.Span;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -55,6 +57,7 @@ public class ExecutionApplicationService {
     private final UuidV7Generator ids;
     private final ObjectMapper objectMapper;
     private final AuditRecorder audit;
+    private final BusinessMetrics metrics;
     private final String ticketIssuer;
     private final String ticketAudience;
 
@@ -68,6 +71,7 @@ public class ExecutionApplicationService {
             UuidV7Generator ids,
             ObjectMapper objectMapper,
             AuditRecorder audit,
+            BusinessMetrics metrics,
             @Value("${sentinelops.execution-ticket.issuer}") String ticketIssuer,
             @Value("${sentinelops.execution-ticket.audience}") String ticketAudience) {
         this.store = store;
@@ -79,11 +83,27 @@ public class ExecutionApplicationService {
         this.ids = ids;
         this.objectMapper = objectMapper;
         this.audit = audit;
+        this.metrics = metrics;
         this.ticketIssuer = requireText(ticketIssuer, "ticketIssuer");
         this.ticketAudience = requireText(ticketAudience, "ticketAudience");
     }
 
     public Execution create(
+            UUID incidentId,
+            UUID proposalId,
+            long expectedIncidentVersion,
+            String idempotencyKey,
+            CurrentPrincipal principal) {
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_CREATE)
+                .incident(incidentId)) {
+            var created = createStored(incidentId, proposalId, expectedIncidentVersion,
+                    idempotencyKey, principal);
+            span.execution(created.id()).approval(created.approvalRequestId()).success();
+            return created;
+        }
+    }
+
+    private Execution createStored(
             UUID incidentId,
             UUID proposalId,
             long expectedIncidentVersion,
@@ -112,11 +132,30 @@ public class ExecutionApplicationService {
     }
 
     public ClaimView claim(UUID executionId, String executorId) {
-        return signClaim(claimDraft(
-                executionId, executorId, "direct:" + ids.generate()));
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_CLAIM)
+                .execution(executionId)) {
+            var claimed = signClaim(claimDraft(
+                    executionId, executorId, "direct:" + ids.generate()));
+            span.success();
+            return claimed;
+        }
     }
 
     public ClaimView claim(
+            UUID executionId,
+            String executorId,
+            String principalKey,
+            String idempotencyKey) {
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_CLAIM)
+                .execution(executionId)) {
+            var claimed = claimIdempotently(executionId, executorId, principalKey,
+                    idempotencyKey);
+            span.success();
+            return claimed;
+        }
+    }
+
+    private ClaimView claimIdempotently(
             UUID executionId,
             String executorId,
             String principalKey,
@@ -226,6 +265,7 @@ public class ExecutionApplicationService {
             return null;
         }
         if (draft.activeLease()) {
+            metrics.executionLeaseConflict();
             return new ClaimProblem(
                     HttpStatus.CONFLICT,
                     "execution_lease_active",
@@ -374,7 +414,9 @@ public class ExecutionApplicationService {
             long fencingToken,
             String executionTicket,
             CompletionCommand command) {
-        return finishVerified(
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_COMPLETE)
+                .execution(executionId)) {
+            var completed = finishVerified(
                 executionId,
                 executorId,
                 fencingToken,
@@ -385,6 +427,11 @@ public class ExecutionApplicationService {
                 IncidentCommand.START_VERIFICATION,
                 "execution_completed",
                 false);
+            span.incident(completed.incidentId()).status(completed.status().databaseValue())
+                    .success();
+            metrics.executionOutcome("succeeded");
+            return completed;
+        }
     }
 
     public Execution complete(
@@ -395,7 +442,9 @@ public class ExecutionApplicationService {
             CompletionCommand command,
             String principalKey,
             String idempotencyKey) {
-        return finishIdempotently(
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_COMPLETE)
+                .execution(executionId)) {
+            var completed = finishIdempotently(
                 executionId,
                 executorId,
                 fencingToken,
@@ -408,6 +457,10 @@ public class ExecutionApplicationService {
                 "succeeded",
                 IncidentCommand.START_VERIFICATION,
                 "execution_completed");
+            span.incident(completed.incidentId()).status(completed.status().databaseValue())
+                    .success();
+            return completed;
+        }
     }
 
     @Transactional
@@ -417,7 +470,9 @@ public class ExecutionApplicationService {
             long fencingToken,
             String executionTicket,
             CompletionCommand command) {
-        return finishVerified(
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_COMPLETE)
+                .execution(executionId)) {
+            var failed = finishVerified(
                 executionId,
                 executorId,
                 fencingToken,
@@ -428,6 +483,11 @@ public class ExecutionApplicationService {
                 IncidentCommand.ESCALATE,
                 "execution_failed",
                 false);
+            span.incident(failed.incidentId()).status(failed.status().databaseValue())
+                    .success();
+            metrics.executionOutcome("failed");
+            return failed;
+        }
     }
 
     public Execution fail(
@@ -438,7 +498,9 @@ public class ExecutionApplicationService {
             CompletionCommand command,
             String principalKey,
             String idempotencyKey) {
-        return finishIdempotently(
+        try (var span = metrics.start(BusinessMetrics.Operation.EXECUTION_COMPLETE)
+                .execution(executionId)) {
+            var failed = finishIdempotently(
                 executionId,
                 executorId,
                 fencingToken,
@@ -451,6 +513,10 @@ public class ExecutionApplicationService {
                 "failed",
                 IncidentCommand.ESCALATE,
                 "execution_failed");
+            span.incident(failed.incidentId()).status(failed.status().databaseValue())
+                    .success();
+            return failed;
+        }
     }
 
     private Execution finishIdempotently(
@@ -482,19 +548,21 @@ public class ExecutionApplicationService {
                 () -> {
                     var verifiedTicket =
                             verifyTicket(executionTicket, executionId, fencingToken);
+                    var finished = finishVerified(
+                            executionId,
+                            executorId,
+                            fencingToken,
+                            verifiedTicket,
+                            command,
+                            executionTarget,
+                            attemptOutcome,
+                            incidentCommand,
+                            eventType,
+                            true);
+                    metrics.executionOutcome(attemptOutcome);
                     return new IdempotencyService.Response(
                             HttpStatus.OK.value(),
-                            objectMapper.valueToTree(finishVerified(
-                                    executionId,
-                                    executorId,
-                                    fencingToken,
-                                    verifiedTicket,
-                                    command,
-                                    executionTarget,
-                                    attemptOutcome,
-                                    incidentCommand,
-                                    eventType,
-                                    true)));
+                            objectMapper.valueToTree(finished));
                 });
         return readResponse(response, Execution.class);
     }
@@ -600,6 +668,11 @@ public class ExecutionApplicationService {
                 .put("eventType", "execution.requested.v1")
                 .put("executionId", executionId.toString())
                 .put("occurredAt", databaseNow.toString());
+        var spanContext = Span.current().getSpanContext();
+        if (spanContext.isValid()) {
+            outboxPayload.put("traceparent", "00-" + spanContext.getTraceId() + '-'
+                    + spanContext.getSpanId() + '-' + spanContext.getTraceFlags().asHex());
+        }
         outbox.insert(
                 eventId,
                 executionId,
@@ -748,6 +821,7 @@ public class ExecutionApplicationService {
     }
 
     private ApiProblemException staleFencingToken() {
+        metrics.executionFencingConflict();
         return problem(
                 HttpStatus.CONFLICT,
                 "STALE_FENCING_TOKEN",

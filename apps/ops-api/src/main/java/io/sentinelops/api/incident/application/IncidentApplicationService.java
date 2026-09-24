@@ -8,12 +8,15 @@ import io.sentinelops.api.incident.domain.IncidentStatus;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.shared.id.UuidV7Generator;
+import io.sentinelops.api.shared.observability.BusinessMetrics;
 import io.sentinelops.api.shared.problem.ApiProblemException;
 import io.sentinelops.api.shared.time.TimeProvider;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -38,22 +41,37 @@ public class IncidentApplicationService {
     private final TimeProvider time;
     private final ObjectMapper objectMapper;
     private final List<AlertEvidenceCollector> evidenceCollectors;
+    private final BusinessMetrics metrics;
 
     public IncidentApplicationService(
             IncidentStore store,
             UuidV7Generator ids,
             TimeProvider time,
             ObjectMapper objectMapper,
-            List<AlertEvidenceCollector> evidenceCollectors) {
+            List<AlertEvidenceCollector> evidenceCollectors,
+            BusinessMetrics metrics) {
         this.store = store;
         this.ids = ids;
         this.time = time;
         this.objectMapper = objectMapper;
         this.evidenceCollectors = List.copyOf(evidenceCollectors);
+        this.metrics = metrics;
     }
 
     @Transactional
     public IncidentSummary ingest(AlertEnvelope alert) {
+        try (var span = metrics.start(BusinessMetrics.Operation.INCIDENT_INGEST)) {
+            var result = ingestStored(alert);
+            span.incident(result.summary().id()).success();
+            if (result.newDelivery() && alert.status() == AlertEnvelope.AlertStatus.FIRING) {
+                metrics.incidentDetected(result.summary().severity());
+                metrics.incidentMttd(detectionDelay(alert, result.acceptedAt()));
+            }
+            return result.summary();
+        }
+    }
+
+    private IngestResult ingestStored(AlertEnvelope alert) {
         String sourceEventId = sourceEventId(alert);
 
         // Lock ordering is deliberate: delivery key, service lookup, active incident upsert.
@@ -61,7 +79,7 @@ public class IncidentApplicationService {
         store.lockDelivery(alert.source(), sourceEventId);
         var existingIncident = store.findIncidentIdForDelivery(alert.source(), sourceEventId);
         if (existingIncident.isPresent()) {
-            return requireSummary(existingIncident.orElseThrow());
+            return new IngestResult(requireSummary(existingIncident.orElseThrow()), false, null);
         }
 
         var serviceId = store.findServiceId(alert.serviceKey()).orElseThrow(() -> new ApiProblemException(
@@ -118,8 +136,49 @@ public class IncidentApplicationService {
                 "incident." + eventType.replace('_', '-'),
                 objectMapper.writeValueAsString(outboxPayload),
                 now);
-        return requireSummary(allocated.id());
+        return new IngestResult(requireSummary(allocated.id()), true, now);
     }
+
+    private Duration detectionDelay(AlertEnvelope alert, Instant acceptedAt) {
+        var alerts = alert.payload().path("alerts");
+        if (!"alertmanager".equals(alert.source())
+                && (!alerts.isArray()
+                        || !"4".equals(alert.payload().path("version").asString()))) {
+            return null;
+        }
+        Instant earliest = parseStartAt(alert.payload().path("startsAt"));
+        if (alerts.isArray()) {
+            for (JsonNode item : alerts) {
+                Instant parsed = parseStartAt(item.path("startsAt"));
+                if (parsed != null && (earliest == null || parsed.isBefore(earliest))) {
+                    earliest = parsed;
+                }
+            }
+        }
+        if (earliest == null) {
+            return null;
+        }
+        try {
+            Duration elapsed = Duration.between(earliest, acceptedAt);
+            return elapsed.isNegative() || elapsed.compareTo(Duration.ofDays(30)) > 0
+                    ? null : elapsed;
+        } catch (ArithmeticException invalid) {
+            return null;
+        }
+    }
+
+    private Instant parseStartAt(JsonNode timestamp) {
+        if (!timestamp.isString()) {
+            return null;
+        }
+        try {
+            return Instant.parse(timestamp.stringValue());
+        } catch (DateTimeParseException invalid) {
+            return null;
+        }
+    }
+
+    private record IngestResult(IncidentSummary summary, boolean newDelivery, Instant acceptedAt) {}
 
     @Transactional(readOnly = true)
     public IncidentSummary get(UUID incidentId) {

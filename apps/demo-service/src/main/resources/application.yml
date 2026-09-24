@@ -20,6 +20,10 @@ sentinelops:
     audience: demo-service
 
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
   endpoints:
     web:
       exposure:

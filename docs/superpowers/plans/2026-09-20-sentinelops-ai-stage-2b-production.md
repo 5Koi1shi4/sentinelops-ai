@@ -409,6 +409,7 @@ git commit -m "feat: add allowlisted production adapters"
 - Create: `deploy/observability/grafana/dashboards/sentinelops-overview.json`
 - Create: `deploy/observability/grafana/dashboards/sentinelops-ai-quality.json`
 - Create: `deploy/observability/grafana/dashboards/sentinelops-execution.json`
+- Create: `scripts/verify-observability-trace.ps1`
 
 **Interfaces:**
 - Produces: correlated spans/logs/metrics with `incident.id`, `diagnosis.run.id`, `approval.id`, `execution.id`, source/tool/model names, statuses and duration.
@@ -444,9 +445,10 @@ Run:
 ```powershell
 .\mvnw.cmd -pl apps/ops-api,apps/ops-executor,apps/demo-service -am -Dtest=TelemetryPrivacyIT test
 docker compose -p sentinelops-observe -f .\deploy\compose\compose.core.yml -f .\deploy\compose\compose.demo.yml config --quiet
+.\scripts\verify-observability-trace.ps1 # after a fresh Demo E2E incident closes
 ```
 
-Expected: PASS; dashboard JSON parses, all data sources resolve, and one trace links webhook → diagnosis tools → approval command → claim → adapter → verification without sensitive content.
+Expected: PASS; dashboard JSON parses and all data sources resolve. Webhook, diagnosis, and each human approval command retain UUID correlation; the durable Outbox carries only validated W3C trace context, and the Stream consumer starts a trace with a Span Link to the execution request. Real PostgreSQL/Valkey tests and a Compose workflow prove the link through Outbox → Stream → Executor. Claim, adapter, and completion are connected through synchronous HTTP propagation; scheduled verification is correlated by `execution.id`. No trace, link, metric, or log contains sensitive content. Human approval may create a separate trace because its wait time is unbounded.
 
 - [ ] **Step 6: Commit observability**
 

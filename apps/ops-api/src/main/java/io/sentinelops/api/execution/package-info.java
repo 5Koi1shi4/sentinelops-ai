@@ -9,6 +9,7 @@
             "shared :: idempotency",
             "shared :: problem",
             "shared :: config",
-            "shared :: time"
+            "shared :: time",
+            "shared :: observability"
         })
 package io.sentinelops.api.execution;
