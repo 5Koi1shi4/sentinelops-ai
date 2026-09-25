@@ -11,7 +11,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY web/ops-console/ ./
 RUN npm run build
 
-FROM nginx:1.29.1-alpine
+FROM nginx:1.30.5-alpine3.24
+RUN apk upgrade --no-cache libexpat
 COPY web/ops-console/nginx.conf /etc/nginx/templates/nginx.conf.template
 COPY --from=build /workspace/dist /usr/share/nginx/html
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/tmp
