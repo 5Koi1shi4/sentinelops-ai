@@ -16,6 +16,7 @@ public final class WebhookSecurityProperties {
     private static final String SECRET_REF_PATTERN = "env:[A-Z][A-Z0-9_]{0,127}";
 
     private final Map<String, byte[]> secrets;
+    private final Map<String, RatePolicy> ratePolicies;
 
     public WebhookSecurityProperties(Environment environment) {
         var configured = environment.getProperty("sentinelops.webhook.source-refs", "");
@@ -48,7 +49,24 @@ public final class WebhookSecurityProperties {
         if (resolved.isEmpty() && environment.acceptsProfiles(Profiles.of("production"))) {
             throw new IllegalStateException("Production requires a configured webhook source");
         }
+        var policies = new HashMap<String, RatePolicy>();
+        var loadLimit = environment.getProperty("SENTINELOPS_WEBHOOK_LOAD_TEST_LIMIT_PER_MINUTE");
+        var loadBurst = environment.getProperty("SENTINELOPS_WEBHOOK_LOAD_TEST_BURST");
+        if (loadLimit != null || loadBurst != null) {
+            if (!environment.acceptsProfiles(Profiles.of("demo"))
+                    || environment.acceptsProfiles(Profiles.of("production"))
+                    || !resolved.containsKey("load-test")) {
+                throw new IllegalStateException("Load-test webhook rate override requires a Demo load-test source");
+            }
+            if (loadLimit == null || loadBurst == null) {
+                throw new IllegalStateException("Load-test webhook rate override is incomplete");
+            }
+            policies.put("load-test", new RatePolicy(
+                    boundedInteger(loadLimit, 1, 10_000),
+                    boundedInteger(loadBurst, 1, 200)));
+        }
         secrets = Map.copyOf(resolved);
+        ratePolicies = Map.copyOf(policies);
     }
 
     public Set<String> sources() {
@@ -59,4 +77,20 @@ public final class WebhookSecurityProperties {
         var secret = secrets.get(source);
         return secret == null ? null : secret.clone();
     }
+
+    public RatePolicy ratePolicyFor(String source) {
+        return ratePolicies.getOrDefault(source, new RatePolicy(60, 20));
+    }
+
+    private int boundedInteger(String value, int minimum, int maximum) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed >= minimum && parsed <= maximum) return parsed;
+        } catch (NumberFormatException failure) {
+            // Configuration fails closed below.
+        }
+        throw new IllegalStateException("Load-test webhook rate override is outside its allowed range");
+    }
+
+    public record RatePolicy(int limitPerMinute, int burst) {}
 }

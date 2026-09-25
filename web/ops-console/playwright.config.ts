@@ -4,7 +4,7 @@ const verificationOutput =
     process.env.SENTINELOPS_VERIFICATION_DIR ?? "../../build/verification";
 
 export default defineConfig({
-    testDir: "./e2e",
+    testDir: process.env.SENTINELOPS_FAULT_TEST_DIR ?? "./e2e",
     fullyParallel: false,
     workers: 1,
     timeout: 180_000,

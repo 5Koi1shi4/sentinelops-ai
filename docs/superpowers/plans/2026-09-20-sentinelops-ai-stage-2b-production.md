@@ -537,23 +537,32 @@ git commit -m "chore: enforce least privilege and security gates"
 - Create: `tests/faults/redis-outage.ps1`
 - Create: `tests/faults/executor-crash.ps1`
 - Create: `tests/faults/model-timeout.ps1`
+- Create: `tests/faults/reclaim-duplicate.ps1`
 - Create: `tests/load/alert-storm.js`
 - Create: `tests/security/prompt-injection-corpus.jsonl`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/reliability/DependencyFailureIT.java`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/reliability/PromptInjectionCorpusIT.java`
 - Create: `scripts/fault-drill.ps1`
+- Create: `deploy/compose/compose.faults.yml`
+- Create: `web/ops-console/faults/executor-crash.spec.ts`
+- Modify: `web/ops-console/playwright.config.ts`
+- Create: `apps/ops-api/src/test/java/io/sentinelops/api/incident/webhook/WebhookRateLimiterTest.java`
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/webhook/WebhookRateLimiter.java`
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/incident/adapter/in/webhook/WebhookSecurityProperties.java`
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/diagnosis/application/DiagnosisApplicationService.java`
 - Create: `docs/runbooks/failure-recovery.md`
+- Modify: `docs/runbooks/stage-2b-progress.md`
 
 **Interfaces:**
 - Produces: machine-readable reports for Redis outage, executor crash/reclaim, model timeout, prompt injection corpus and 60-second alert storm.
 - Produces: acceptance thresholds: no lost persisted command, no duplicate side effect, no unauthorized tool/action, no false `RESOLVED`, and bounded API latency/error behavior.
 - Consumes: complete Demo/observability stack.
 
-- [ ] **Step 1: Write failing dependency-failure and corpus tests**
+- [x] **Step 1: Write failing dependency-failure and corpus tests**
 
 `DependencyFailureIT` covers PostgreSQL down (503/no false acknowledgment), Redis down (Outbox backlog/no direct action), model timeout (manual/degraded path), Loki down (missing evidence/no unsafe proposal), and telemetry down (workflow continues safely). `PromptInjectionCorpusIT` loads at least 25 multilingual malicious strings and asserts no action tool/unknown Runbook and no secret echo.
 
-- [ ] **Step 2: Create the k6 alert-storm test before tuning**
+- [x] **Step 2: Create the k6 alert-storm test before tuning**
 
 ```javascript
 import http from 'k6/http';
@@ -567,7 +576,7 @@ export const options = {
 
 function signedAlertBodyForFingerprint(incidentFingerprint) {
   const timestamp = `${Math.floor(Date.now() / 1000)}`;
-  const nonce = `${__VU}-${__ITER}-${Date.now()}`;
+  const nonce = Array.from(new Uint8Array(crypto.randomBytes(16)), byte => byte.toString(16).padStart(2, '0')).join('');
   const sourceEventId = `${incidentFingerprint}-${nonce}`;
   const payload = JSON.stringify({
     version: '4',
@@ -597,6 +606,7 @@ function signedAlertBodyForFingerprint(incidentFingerprint) {
       'X-Sentinel-Timestamp': timestamp,
       'X-Sentinel-Nonce': nonce,
       'X-Sentinel-Signature': `v1=${signature}`,
+      'X-SentinelOps-Event-Id': sourceEventId,
     },
   };
 }
@@ -610,7 +620,7 @@ export default function () {
 
 The load profile configures source `load-test` for 10,000 requests/minute with burst 200; production defaults remain 60/minute with burst 20. The helper uses a unique nonce/source-event fingerprint per request but one normalized `incident_fingerprint`, so the expected result is one active incident with 6,000 occurrence events. A separate source using the production default drives the rate-limit scenario and treats the documented 429 plus `Retry-After` response as success.
 
-- [ ] **Step 3: Run fault/load suite and observe failures**
+- [x] **Step 3: Run fault/load suite and observe failures**
 
 Run:
 
@@ -620,11 +630,11 @@ Run:
 
 Expected: at least one scenario fails before recovery automation/limits are fully wired; preserve its diagnostic report.
 
-- [ ] **Step 4: Fix only demonstrated reliability gaps**
+- [x] **Step 4: Fix only demonstrated reliability gaps**
 
 Use `systematic-debugging` for each failing drill. Keep transactions short, add missing bounded retries only for idempotent operations, ensure Outbox resumes, executor reclaim honors fencing, and model/data-source outages generate typed incident events. Do not relax the load/fault assertions to make tests pass.
 
-- [ ] **Step 5: Run the full drill twice**
+- [x] **Step 5: Run the full drill twice**
 
 Run:
 
@@ -635,10 +645,10 @@ Run:
 
 Expected: both PASS with one active incident for the storm fingerprint, zero duplicate side effects, no unauthorized action, no false resolution, and sanitized report files under `build/verification/faults/`.
 
-- [ ] **Step 6: Commit fault/load evidence and recovery docs**
+- [x] **Step 6: Commit fault/load evidence and recovery docs**
 
 ```powershell
-git add tests apps/ops-api scripts docs/runbooks
+git add tests apps/ops-api scripts deploy/compose/compose.faults.yml web/ops-console/faults web/ops-console/playwright.config.ts docs/runbooks docs/superpowers/plans/2026-09-20-sentinelops-ai-stage-2b-production.md
 git commit -m "test: prove production failure semantics"
 ```
 

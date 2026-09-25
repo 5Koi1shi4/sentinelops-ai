@@ -10,6 +10,7 @@ import io.sentinelops.api.diagnosis.domain.InvalidProposalException;
 import io.sentinelops.api.incident.domain.IncidentCommand;
 import io.sentinelops.api.incident.domain.IncidentStateMachine;
 import io.sentinelops.api.incident.domain.IncidentStatus;
+import io.sentinelops.api.incident.application.evidence.DefaultEvidenceRedactor;
 import io.sentinelops.api.identity.application.CurrentPrincipal;
 import io.sentinelops.api.identity.application.AuthorizationService;
 import io.sentinelops.api.identity.application.PlatformRole;
@@ -266,6 +267,13 @@ public class DiagnosisApplicationService {
 
     private IdempotencyService.Response persistProposal(DiagnosisProposalDraft draft, DiagnosisContext context,
             UUID runId, UUID owner, DiagnosisStore.IncidentSnapshot triagingIncident, long expectedVersion, CurrentPrincipal principal) {
+            // Model output is untrusted even after schema and policy validation. Reject it before
+            // hashing or persistence when the evidence redaction policy finds credential content.
+            var outputScan = new DefaultEvidenceRedactor().redact(objectMapper.valueToTree(draft));
+            if (outputScan.count() > 0 || outputScan.truncated()) {
+                throw new InvalidProposalException("MODEL_OUTPUT_SENSITIVE",
+                        "Model proposal contains sensitive content.");
+            }
             var incidentId = context.incidentId();
             var runbook = draft.runbookVersionId() == null
                     ? null

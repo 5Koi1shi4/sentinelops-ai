@@ -66,3 +66,13 @@ Web 旧运行镜像的 Trivy 预扫发现约 48 项 HIGH/CRITICAL Alpine 漏洞�
 最终完整安全门禁见 `build/stage2b-task6-full-security-cleanup-final.log` 和 `build/security/`：Java 21 全 reactor 480 项（按既有安排跳过 1 项）零失败、零错误；Java/Node CycloneDX SBOM 分别含 336/540 个组件；`npm audit` 为零漏洞，前端 Lint、Vitest 和生产构建通过。OWASP 以真实依赖报告和 CVSS 7 阈值通过。Testcontainers 的 `docker-java-transport-zerodep:3.7.1` 含 shaded HttpClient、HttpCore 和 HttpCore H2；五条精确 PURL/CVE 规则只适用于经三个 Maven 模块依赖树验证的 test scope，过期日为 2026-10-25，未使用规则会使门禁失败。此前无效的 XML 组合通过红—绿行为测试修正；Windows 临时 Node 目录清理改用路径检查后的 .NET 删除，完整复跑已验证成功。
 
 Trivy 对文件系统和 API、Executor、Demo、Web 四个成品镜像分别运行漏洞/配置与 secrets 扫描，十份 JSON 报告均无命中，归档于 `build/security/`。完整本地门禁退出码为 0；远端 GitHub CI 需在后续推送或 PR 时验证 Ubuntu 执行环境。
+
+## Task 7：故障、重复投递、恶意输入和告警风暴验证（已完成）
+
+新增隔离的 `fault-drill.ps1`，每次创建独立 Compose 项目和随机测试密钥，检查宿主端口、运行真实浏览器流程与 PostgreSQL 17/Valkey Testcontainers 专项，并在结束时清理该项目的容器、网络及数据卷。机器可读的脱敏结果仅保存在 `build/verification/faults/<run-id>/report.json`；原始诊断日志与浏览器产物单独保存在 `build/fault-logs/<run-id>/`。脚本在清理失败时也会把整轮标为失败。
+
+Executor 停机与 Valkey 中断均从真实事故、诊断、审批走到待执行状态。中断期间没有执行尝试或目标副作用，也没有错误标记为已恢复；恢复后恰好一次执行尝试、一次目标副作用并完成验证。租约过期、fencing、旧 owner 迟到回报和重复 Stream 投递另以真实 PostgreSQL/Valkey 专项分别验证 6 项与 4 项。依赖故障专项 5 项覆盖 PostgreSQL、Valkey、模型、Loki、遥测故障；模型输出新增敏感信息拦截，在持久化方案前拒绝凭据 canary。提示注入语料包含 35 条、11 种语言，经真实 Spring AI 路径运行 3 项，未产生未授权操作或泄露 canary。
+
+Webhook 的 Demo 专用高流量来源配置为每分钟 10,000 次、突发 200 次，正式默认仍为每分钟 60 次、突发 20 次。默认限流场景验证 429 与 `Retry-After`；红阶段低限额风暴仅接受 79/6,000 次，`build/stage2b-task7-alert-storm-baseline-red.log` 保存该证据。修复后同一事故指纹的 60 秒、每秒 100 次签名投递全部接受，形成 6,000 条 occurrence event，始终只有一个活跃事故。最终两轮完整报告 `build/verification/faults/20260925-190346-cdbe1ded/report.json`、`build/verification/faults/20260925-192747-157a24b2/report.json` 均为 PASS：各接受 6,000/6,000 次，p95 分别为 17.60/13.76 毫秒，恢复场景各一次副作用，清理均成功。两轮之间 E: 外置盘短暂断连使一次运行中断，Docker Desktop 的 E: bind mount 随后失效；中断项目已按独立项目名清理，重启 Docker Desktop 后只读挂载检查通过，再进行上述第二轮完整复跑。中断与启动失败的记录未计入通过次数。
+
+Java 21 全 reactor 回归 `build/stage2b-task7-all-java-it-final.log`：API 419 项（既有安排跳过 1 项）、Executor 58 项、Demo 13 项，零失败；前端 Lint 和格式检查通过。只读复审未发现阻断或高优先级问题。外部生产服务故障由上述受控依赖和隔离栈模拟，当前证据属于本地验收。
