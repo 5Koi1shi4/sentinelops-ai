@@ -5,8 +5,12 @@ COPY apps ./apps
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -pl apps/ops-executor -am -Dmaven.test.skip=true package
 
-FROM eclipse-temurin:21.0.12_8-jre-alpine-3.24
-RUN apk upgrade --no-cache libexpat
+FROM alpine:3.24
+ENV JAVA_HOME=/opt/java/openjdk
+ENV PATH="$JAVA_HOME/bin:$PATH"
+ENV LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
+COPY deploy/images/install-temurin21-jre.sh /tmp/install-temurin21-jre.sh
+RUN /bin/sh /tmp/install-temurin21-jre.sh && rm /tmp/install-temurin21-jre.sh
 WORKDIR /app
 COPY --from=build /workspace/apps/ops-executor/target/ops-executor-*.jar /app/app.jar
 USER 10001:10001
