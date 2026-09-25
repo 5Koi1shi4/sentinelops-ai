@@ -462,25 +462,34 @@ git commit -m "feat: add privacy-safe operations telemetry"
 **Files:**
 - Create: `deploy/postgres/init/001_roles.sql`
 - Create: `deploy/postgres/grants/runtime-grants.sql`
+- Create: `deploy/postgres/provision-roles.sh`, `deploy/postgres/README.md`, and Core/Demo-only placeholder secret files
+- Create: `apps/ops-api/src/main/resources/db/callback/afterMigrate.sql`
+- Create: `apps/ops-api/src/main/resources/db/migration/V19__restrict_webhook_nonce_delete.sql`
 - Create: `apps/ops-api/src/test/java/io/sentinelops/api/schema/RuntimeDatabasePrivilegesIT.java`
+- Modify: `apps/ops-api/src/test/java/io/sentinelops/api/schema/SchemaMigrationIT.java`
 - Create: `.github/workflows/ci.yml`
 - Create: `.github/workflows/security.yml`
 - Create: `scripts/security-scan.ps1`
+- Create: `tests/security-scan/security-scan-behavior.ps1`
 - Modify: `pom.xml`
 - Modify: `web/ops-console/package.json`
+- Modify: `web/ops-console/Dockerfile` and the three Java service Dockerfiles when image scans identify fixable base-image vulnerabilities (separate upgrade commits)
+- Create: `deploy/images/install-temurin21-jre.sh` to install the checksum-pinned Java security baseline in the Alpine runtime images
 - Create: `.trivyignore.yaml`
 - Create: `docs/security/exception-policy.md`
+- Create: `docs/security/dependency-check-exceptions.json`
+- Modify: `deploy/compose/compose.core.yml` and `apps/ops-api/src/main/resources/application.yml`
 
 **Interfaces:**
 - Produces: roles `sentinelops_migrator` and `sentinelops_app`; executor has no database role.
 - Produces: CI artifacts for tests, dependency review, Java/npm audit, Trivy filesystem/images, secrets scan and CycloneDX SBOM.
 - Consumes: all migrations and production images.
 
-- [ ] **Step 1: Write failing runtime privilege tests**
+- [x] **Step 1: Write failing runtime privilege tests**
 
-Connect as `sentinelops_app` and assert required SELECT/INSERT/UPDATE works; assert schema DDL, role creation, extension creation, `audit_record` UPDATE/DELETE, `incident_event` UPDATE/DELETE, `execution_attempt` UPDATE/DELETE, and `execution_attempt_event` UPDATE/DELETE fail. Assert executor configuration contains no JDBC URL/user/password.
+Connect as `sentinelops_app` and assert required SELECT/INSERT/UPDATE works, including the reviewed `webhook_replay_nonce` expiry cleanup and `role_grant` revocation DELETE operations. Assert schema DDL, role creation, extension creation, `audit_record` UPDATE/DELETE, `incident_event` UPDATE/DELETE, `execution_attempt` UPDATE/DELETE, and `execution_attempt_event` UPDATE/DELETE fail. Assert existing and future application routines do not grant runtime EXECUTE while pgvector operations and existing triggers still work. Assert executor configuration contains no JDBC URL/user/password.
 
-- [ ] **Step 2: Run privilege test and observe failure**
+- [x] **Step 2: Run privilege test and observe failure**
 
 Run:
 
@@ -490,19 +499,19 @@ Run:
 
 Expected: FAIL because Demo owner credentials still grant excessive rights.
 
-- [ ] **Step 3: Create least-privilege roles and forward grants**
+- [x] **Step 3: Create least-privilege roles and forward grants**
 
-Revoke PUBLIC schema/table/sequence defaults. Migrator owns schema/migrations. App receives schema usage and explicit table DML; it receives no DDL/role/extension privileges and no delete unless a specific retention worker requires it. Use `alter default privileges for role sentinelops_migrator` so future Flyway tables receive reviewed runtime grants. Append-only tables receive SELECT/INSERT only; state changes occur on aggregate tables.
+Revoke PUBLIC schema/table/sequence defaults. The database administrator installs the pgvector extension before Flyway runs; the migrator owns schema/migrations. App receives schema usage and explicit table DML; it receives no DDL/role/extension privileges. Grant DELETE only for the reviewed `webhook_replay_nonce` expiry cleanup and `role_grant` revocation operations, plus any separately reviewed retention worker. Use `alter default privileges for role sentinelops_migrator` so future Flyway tables receive reviewed runtime grants. Append-only tables receive SELECT/INSERT only; state changes occur on aggregate tables. Revoke PUBLIC/runtime EXECUTE on application-owned routines and globally revoke future migrator function defaults without changing pgvector extension functions. A packaged `afterMigrate` callback grants reviewed UPDATE/DELETE on newly created current tables and revokes access to `flyway_schema_history` before the API serves requests; verify these rights before a second administrator grant pass.
 
-Do not store passwords in SQL files. Compose passes psql variables from Docker secrets; managed production databases execute reviewed role/grant scripts through the platform administrator.
+Do not store passwords in SQL files. Compose passes psql variables from Docker secrets and gives Flyway a distinct migrator login; managed production databases execute reviewed role/grant scripts through the platform administrator. Demo-only placeholder files may keep the existing local volume password compatible, but production must require externally supplied secrets.
 
-- [ ] **Step 4: Add pinned security workflows and SBOM generation**
+- [x] **Step 4: Add pinned security workflows and SBOM generation**
 
 Maven adds CycloneDX and OWASP dependency-check reporting without skipping tests. npm runs `npm ci`, `npm audit --audit-level=high`, lint/test/build. Trivy scans repository and built images with severity HIGH,CRITICAL and fails on unfixed critical issues unless a time-bounded exception exists.
 
 `.trivyignore.yaml` entries require CVE, affected artifact/image, reason, compensating control, owner and expiry. `security-scan.ps1` rejects expired or incomplete entries before invoking scanners.
 
-- [ ] **Step 5: Verify privileges and local security pipeline**
+- [x] **Step 5: Verify privileges and local security pipeline**
 
 Run:
 
@@ -513,7 +522,9 @@ Run:
 
 Expected: PASS; scan artifacts include Java/npm dependency reports, image report and Java/Node SBOM; runtime app cannot mutate append-only records.
 
-- [ ] **Step 6: Commit least privilege and security automation**
+Also render the Core/Demo Compose configuration and start a task-specific stack to verify `ops-api` reaches readiness while PostgreSQL reports `sentinelops_app` for runtime sessions and `sentinelops_migrator` for Flyway. Stop only the task-specific stack and its volumes after collecting evidence.
+
+- [x] **Step 6: Commit least privilege and security automation**
 
 ```powershell
 git add deploy/postgres apps/ops-api .github scripts pom.xml web/ops-console docs/security .trivyignore.yaml

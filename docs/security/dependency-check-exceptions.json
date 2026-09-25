@@ -1,0 +1,59 @@
+{
+  "exceptions": [
+    {
+      "cve": "CVE-2026-71290",
+      "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.5.1",
+      "test_dependency_purl": "pkg:maven/com.github.docker-java/docker-java-transport-zerodep@3.7.1",
+      "scope": "test",
+      "affected": "Testcontainers 2.0.5 test dependency docker-java-transport-zerodep 3.7.1 shades HttpComponents Client 5.5.1.",
+      "expires_at": "2026-10-25",
+      "reason": "The vulnerable package is embedded in Docker Java's test transport and has no compatible upstream rebuild available for this test dependency.",
+      "compensating_control": "The scan verifies the Docker Java transport remains test-scope only and rejects the exception if HttpComponents 5.5.1 enters any runtime scope; Java tests and final-image Trivy scans remain required.",
+      "owner": "SentinelOps platform maintainers"
+    },
+    {
+      "cve": "CVE-2026-54399",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.3.6",
+      "test_dependency_purl": "pkg:maven/com.github.docker-java/docker-java-transport-zerodep@3.7.1",
+      "scope": "test",
+      "affected": "Testcontainers 2.0.5 test dependency docker-java-transport-zerodep 3.7.1 shades HttpComponents Core 5.3.6.",
+      "expires_at": "2026-10-25",
+      "reason": "The vulnerable package is embedded in Docker Java's test transport and has no compatible upstream rebuild available for this test dependency.",
+      "compensating_control": "The scan verifies the Docker Java transport remains test-scope only and rejects the exception if HttpComponents Core 5.3.6 enters any runtime scope; Java tests and final-image Trivy scans remain required.",
+      "owner": "SentinelOps platform maintainers"
+    },
+    {
+      "cve": "CVE-2026-54428",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5@5.3.6",
+      "test_dependency_purl": "pkg:maven/com.github.docker-java/docker-java-transport-zerodep@3.7.1",
+      "scope": "test",
+      "affected": "Testcontainers 2.0.5 test dependency docker-java-transport-zerodep 3.7.1 shades HttpComponents Core 5.3.6.",
+      "expires_at": "2026-10-25",
+      "reason": "The vulnerable package is embedded in Docker Java's test transport and has no compatible upstream rebuild available for this test dependency.",
+      "compensating_control": "The scan verifies the Docker Java transport remains test-scope only and rejects the exception if HttpComponents Core 5.3.6 enters any runtime scope; Java tests and final-image Trivy scans remain required.",
+      "owner": "SentinelOps platform maintainers"
+    },
+    {
+      "cve": "CVE-2026-54399",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.3.6",
+      "test_dependency_purl": "pkg:maven/com.github.docker-java/docker-java-transport-zerodep@3.7.1",
+      "scope": "test",
+      "affected": "Testcontainers 2.0.5 test dependency docker-java-transport-zerodep 3.7.1 shades HttpComponents Core H2 5.3.6.",
+      "expires_at": "2026-10-25",
+      "reason": "The vulnerable package is embedded in Docker Java's test transport and has no compatible upstream rebuild available for this test dependency.",
+      "compensating_control": "The scan verifies the Docker Java transport remains test-scope only and rejects the exception if HttpComponents Core H2 5.3.6 enters any runtime scope; Java tests and final-image Trivy scans remain required.",
+      "owner": "SentinelOps platform maintainers"
+    },
+    {
+      "cve": "CVE-2026-54428",
+      "purl": "pkg:maven/org.apache.httpcomponents.core5/httpcore5-h2@5.3.6",
+      "test_dependency_purl": "pkg:maven/com.github.docker-java/docker-java-transport-zerodep@3.7.1",
+      "scope": "test",
+      "affected": "Testcontainers 2.0.5 test dependency docker-java-transport-zerodep 3.7.1 shades HttpComponents Core H2 5.3.6.",
+      "expires_at": "2026-10-25",
+      "reason": "The vulnerable package is embedded in Docker Java's test transport and has no compatible upstream rebuild available for this test dependency.",
+      "compensating_control": "The scan verifies the Docker Java transport remains test-scope only and rejects the exception if HttpComponents Core H2 5.3.6 enters any runtime scope; Java tests and final-image Trivy scans remain required.",
+      "owner": "SentinelOps platform maintainers"
+    }
+  ]
+}

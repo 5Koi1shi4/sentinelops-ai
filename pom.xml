@@ -119,6 +119,39 @@
                     <argLine>-Xshare:off -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"</argLine>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>2.9.3</version>
+                <executions>
+                    <execution>
+                        <id>java-cyclonedx-sbom</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>makeAggregateBom</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <schemaVersion>1.6</schemaVersion>
+                    <outputFormat>json</outputFormat>
+                    <outputName>sentinelops-java</outputName>
+                    <includeBomSerialNumber>true</includeBomSerialNumber>
+                    <includeTestScope>true</includeTestScope>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>12.2.2</version>
+                <configuration>
+                    <formats>HTML,JSON</formats>
+                    <failBuildOnCVSS>7.0</failBuildOnCVSS>
+                    <skipTestScope>false</skipTestScope>
+                    <failOnError>true</failOnError>
+                    <outputDirectory>${maven.multiModuleProjectDirectory}/target/security-reports</outputDirectory>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

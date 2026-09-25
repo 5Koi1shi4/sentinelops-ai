@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:configtree:/run/secrets/
   ai:
     model:
       chat: none
@@ -18,8 +20,8 @@ spring:
     name: sentinelops-api
   datasource:
     url: ${SENTINELOPS_DB_URL:jdbc:postgresql://localhost:5432/sentinelops}
-    username: ${SENTINELOPS_DB_USERNAME:sentinelops}
-    password: ${SENTINELOPS_DB_PASSWORD:sentinelops}
+    username: ${SENTINELOPS_DB_USERNAME:sentinelops_app}
+    password: ${SENTINELOPS_DB_PASSWORD:}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
@@ -31,6 +33,9 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    user: ${SENTINELOPS_DB_MIGRATOR_USERNAME:${spring.datasource.username}}
+    password: ${SENTINELOPS_DB_MIGRATOR_PASSWORD:${spring.datasource.password}}
+    locations: classpath:db/migration,classpath:db/callback
   security:
     oauth2:
       resourceserver:

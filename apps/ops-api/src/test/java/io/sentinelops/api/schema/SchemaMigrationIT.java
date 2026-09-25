@@ -81,7 +81,7 @@ class SchemaMigrationIT extends PostgresIntegrationTest {
                 .query(String.class)
                 .single();
 
-        assertThat(currentVersion).isEqualTo("18");
+        assertThat(currentVersion).isEqualTo("19");
 
         var auditColumns = jdbc.sql("""
                         select column_name

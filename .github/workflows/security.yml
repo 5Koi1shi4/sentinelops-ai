@@ -1,0 +1,70 @@
+name: Scheduled security scan
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-pipeline:
+    name: Refresh vulnerability data and rescan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java 21
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21.0.12.1+1
+          cache: maven
+
+      - name: Set up Node.js 24.8.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.8.0
+
+      - name: Define scan cache day
+        id: scan-cache-day
+        shell: bash
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OWASP and npm scan data
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            build/security/odc-datafeed-database
+            build/security/npm-cache
+          key: security-scan-${{ runner.os }}-${{ hashFiles('pom.xml') }}-${{ steps.scan-cache-day.outputs.date }}
+          restore-keys: |
+            security-scan-${{ runner.os }}-${{ hashFiles('pom.xml') }}-
+
+      - name: Run security scan behavior tests
+        shell: pwsh
+        run: ./tests/security-scan/security-scan-behavior.ps1
+
+      - name: Run required tests, dependency audits, SBOM generation and Trivy scans
+        shell: pwsh
+        env:
+          CI: 'true'
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: ./scripts/security-scan.ps1 -ReportDirectory build/security
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scheduled-security-reports-${{ github.run_id }}
+          path: |
+            build/security/*.json
+            build/security/*.html
+            build/security/*.log
+            build/security/*.xml
+            build/security/*.yaml
+          if-no-files-found: error
+          retention-days: 30

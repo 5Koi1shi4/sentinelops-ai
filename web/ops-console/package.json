@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest",
+    "audit": "npm audit --audit-level=high",
+    "sbom": "cyclonedx-npm --package-lock-only --spec-version 1.6 --output-format JSON --output-file dist/ops-console.cdx.json",
     "e2e": "playwright test",
     "preview": "vite preview",
     "format:check": "prettier --check .",
@@ -15,6 +17,7 @@
     "api:check": "node scripts/check-generated-api.mjs"
   },
   "devDependencies": {
+    "@cyclonedx/cyclonedx-npm": "6.0.1",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",

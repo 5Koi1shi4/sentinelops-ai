@@ -4,9 +4,11 @@ services:
     environment:
       POSTGRES_DB: sentinelops
       POSTGRES_USER: sentinelops
-      POSTGRES_PASSWORD: ${SENTINELOPS_DB_PASSWORD:-sentinelops-demo-db}
+      POSTGRES_PASSWORD_FILE: /run/secrets/sentinelops_db_admin_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    secrets:
+      - sentinelops_db_admin_password
     networks: [control-plane]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -15,6 +17,34 @@ services:
       retries: 30
     restart: "no"
     security_opt: [no-new-privileges:true]
+
+  postgres-privileges:
+    image: pgvector/pgvector:0.8.6-pg17-trixie
+    entrypoint: ["/bin/sh", "/opt/sentinelops/postgres/provision-roles.sh"]
+    environment:
+      SENTINELOPS_DB_ADMIN_USER: sentinelops
+      SENTINELOPS_DB_NAME: sentinelops
+      SENTINELOPS_DB_HOST: postgres
+      SENTINELOPS_DB_ADMIN_PASSWORD_FILE: /run/secrets/sentinelops_db_admin_password
+      SENTINELOPS_DB_MIGRATOR_PASSWORD_FILE: /run/secrets/sentinelops_db_migrator_password
+      SENTINELOPS_DB_APP_PASSWORD_FILE: /run/secrets/sentinelops_db_app_password
+    volumes:
+      - ../postgres/provision-roles.sh:/opt/sentinelops/postgres/provision-roles.sh:ro
+      - ../postgres/init:/opt/sentinelops/postgres/init:ro
+      - ../postgres/grants:/opt/sentinelops/postgres/grants:ro
+    secrets:
+      - sentinelops_db_admin_password
+      - sentinelops_db_migrator_password
+      - sentinelops_db_app_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control-plane]
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
 
   valkey:
     image: valkey/valkey:8.1.10-alpine3.24
@@ -40,8 +70,8 @@ services:
       dockerfile: apps/ops-api/Dockerfile
     environment:
       SENTINELOPS_DB_URL: jdbc:postgresql://postgres:5432/sentinelops
-      SENTINELOPS_DB_USERNAME: sentinelops
-      SENTINELOPS_DB_PASSWORD: ${SENTINELOPS_DB_PASSWORD:-sentinelops-demo-db}
+      SENTINELOPS_DB_USERNAME: sentinelops_app
+      SENTINELOPS_DB_MIGRATOR_USERNAME: sentinelops_migrator
       SENTINELOPS_VALKEY_HOST: valkey
       SENTINELOPS_VALKEY_PORT: 6379
       SENTINELOPS_OIDC_JWK_SET_URI: http://keycloak:8080/realms/sentinelops/protocol/openid-connect/certs
@@ -51,9 +81,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-privileges:
+        condition: service_completed_successfully
       valkey:
         condition: service_healthy
     networks: [control-plane]
+    secrets:
+      - source: sentinelops_db_app_password
+        target: spring.datasource.password
+      - source: sentinelops_db_migrator_password
+        target: spring.flyway.password
     healthcheck:
       test:
         [
@@ -138,3 +175,11 @@ networks:
 volumes:
   postgres_data:
   valkey_data:
+
+secrets:
+  sentinelops_db_admin_password:
+    file: ${SENTINELOPS_DB_ADMIN_PASSWORD_FILE:-../postgres/demo-secrets/db-admin-password}
+  sentinelops_db_migrator_password:
+    file: ${SENTINELOPS_DB_MIGRATOR_PASSWORD_FILE:-../postgres/demo-secrets/db-migrator-password}
+  sentinelops_db_app_password:
+    file: ${SENTINELOPS_DB_APP_PASSWORD_FILE:-../postgres/demo-secrets/db-app-password}

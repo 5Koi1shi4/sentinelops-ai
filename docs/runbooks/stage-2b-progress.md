@@ -46,4 +46,23 @@ Task 5 已实现隐私安全的 OpenTelemetry 业务跨度/日志/指标、Colle
 
 原计划要求从 webhook 经人工审批直到验证组成一条 trace，与异步审批和定时验证的实际边界不符。设计与计划现明确采用跨 trace 关联：Outbox 保存经校验的 W3C `traceparent`，Stream 传递该上下文，Executor 建立独立 trace 并通过 Span Link 指向创建执行的跨度；定时验证以 execution UUID 关联。真实栈校验 `build/stage2b-task5-trace-runtime-check-final.log` 为 PASS，确认创建跨度、Stream 消息、Executor 消息/适配器/API 领取及完成跨度、Span Link 和独立验证 trace。隐私 canary、传播边界及 Executor 轮询父跨度问题均经过红—绿测试。只读复审无阻断或高优先级问题；校验脚本仅扫描最近 100 条 Stream 记录，在极高并发下可能误报未找到。
 
-最终 Java 21 全 reactor 回归见 `build/stage2b-task5-all-java-it-final.log`：API 397 项（按既有安排跳过 1 项）、Executor 58 项、Demo 13 项，零失败。计划指定的三模块遥测门禁见 `build/stage2b-task5-plan-gate-final.log`，构建成功；最终隔离栈真实浏览器闭环见 `build/stage2b-task5-trace-e2e-final.log`，1 项通过。Task 5 完成后按用户要求暂停；Task 6–8 尚未开始。
+最终 Java 21 全 reactor 回归见 `build/stage2b-task5-all-java-it-final.log`：API 397 项（按既有安排跳过 1 项）、Executor 58 项、Demo 13 项，零失败。计划指定的三模块遥测门禁见 `build/stage2b-task5-plan-gate-final.log`，构建成功；最终隔离栈真实浏览器闭环见 `build/stage2b-task5-trace-e2e-final.log`，1 项通过。Task 5 完成后曾按用户要求暂停；用户随后要求恢复实施。
+
+## Task 6：数据库最小权限与安全门禁（已完成）
+
+Core/Demo 数据库现分为 `sentinelops_migrator` 与 `sentinelops_app`：前者执行 Flyway，后者仅获得审查过的业务 DML，Executor 没有业务数据库凭据。迁移后回调为可变表补充显式 UPDATE，历史记录保持只追加；V19 使应用角色只能删除已过期的 Webhook nonce。新增角色与授权脚本不包含密码，Core/Demo 使用独立 Docker secret 文件。真实 PostgreSQL 17 权限专项 12 项通过（`build/stage2b-task6-v19-roleless-green.log`），Schema 与告警回归 21 项通过（`build/stage2b-task6-v19-schema-alert-green.log`）。隔离 Compose 的 API readiness 为 UP，运行连接和迁移连接分别使用预期角色；有效 nonce 未被清理，过期 nonce 被清理。证据见 `build/stage2b-task6-expiry-compose-verified.log`，该项目专用容器、网络和数据卷已清理。
+
+安全脚本、CI 工作流与异常策略已实现。首次完整扫描在 OWASP Dependency-Check 的 NVD API 首次同步停滞后按缺失报告判失败；同轮 `npm ci` 遇到 `ECONNRESET`。后续改用官方 NVD 数据源与持久缓存，再依据报告修复依赖漏洞。Linux PowerShell 容器本地试验因镜像仓库 TLS 握手超时未运行；Windows 行为测试和完整本地门禁已通过，CI 工作流要求在 Ubuntu 上再次运行，远端 CI 尚未触发。
+
+OWASP 改用官方 NVD 数据源并关闭由 npm audit/Trivy 重复覆盖的 RetireJS 分析后，初次生成 187 条依赖记录的 JSON/HTML 报告，按 CVSS 7 门禁正确失败（`build/security/odc-datafeed-retirejs-disabled-standalone.log`）。依赖树确认高危 Vert.x 4.5.28 来自 Executor 的 Fabric8 运行时，Kotlin 2.3.21 存在于运行时；受影响的 HttpClient 5.5.1/HttpCore 5.3.6 位于 Testcontainers 的 shaded 测试依赖，而 Executor 的直接运行时版本已分别为 5.6.4/5.4.3（`build/stage2b-task6-odc-dependency-tree.log`）。运行时依赖已升级；测试依赖按下述范围规则处理。
+
+Vert.x 已按实际使用模块固定为 4.5.34（独立提交 `b5f0c4b`），避免导入整套 BOM 意外降级 Log4j API；第一次 BOM 尝试的 Executor 红灯日志为 `build/stage2b-task6-vertx-executor-tests.log`，修正后依赖树确认 Log4j API 2.25.5，Executor 58 项全通过（`build/stage2b-task6-vertx-executor-tests-green.log`）。Kotlin 升为 2.4.20、Okio 升为 3.16.4 后，旧 `kotlin-stdlib-common` 不再出现在三个服务的依赖树（`build/stage2b-task6-kotlin-okio-upgrade-tree.log`）；该升级独立提交 `d5aba8d`。新鲜 Java 21 全 reactor `verify` 为 API 409 项（跳过 1）、Executor 58 项、Demo 13 项，零失败，见 `build/stage2b-task6-kotlin-okio-full-reactor.log`。
+
+Trivy 首次在线文件系统预扫遇 Maven Central HTTP 429；按官方排障建议改用已填充 Maven 缓存的只读挂载与离线扫描，并用 Java BOM 对照关键依赖覆盖。离线预扫发现原 Tomcat embedded 11.0.24 的三条高危扫描项；按 Apache 已发布的修复版本将其升级到 11.0.26，作为独立提交 `0f95876`。升级后 Maven 依赖树显示三个 Tomcat embedded 构件均为 11.0.26，真实 PostgreSQL 17 的 Webhook/Schema 回归 11 项通过（`build/stage2b-task6-tomcat-focused.log`），Trivy 文件系统预扫为零高危漏洞和零高危配置问题（`build/security/trivy-filesystem-tomcat-green.json`）。
+
+Web 旧运行镜像的 Trivy 预扫发现约 48 项 HIGH/CRITICAL Alpine 漏洞。升级到官方 NGINX 1.30.5 / Alpine 3.24 并升级 `libexpat` 后，成品镜像可构建、非 root NGINX 配置检查通过，Trivy HIGH/CRITICAL 扫描为 0 项（`build/security/trivy-image-web-fixed-preflight.json`）；基础镜像升级单独提交为 `ece0e7c`。
+旧 Maven/Ubuntu Java 运行基础镜像还有 11 项可修复 HIGH 漏洞。先改为 Temurin 21.0.12+8 JRE / Alpine 3.24，提交 `648c09e`；核对官方安全基线后，再从 Alpine 3.24 安装带 SHA-256 校验的 Temurin 21.0.12.1+1 JRE，独立提交 `491235f`。三个最终成品镜像的 Trivy 预扫均为 0 项 HIGH/CRITICAL，包括 JAR 依赖（`build/security/trivy-image-api-jre-baseline-preflight.json`、`trivy-image-executor-jre-baseline-preflight.json`、`trivy-image-demo-jre-baseline-preflight.json`）。独立 Compose 项目 `stage2b-task6-jre-baseline` 的 API、Executor、Demo、Web 均健康，三个 Java 进程实际运行 21.0.12.1+1 且 readiness 返回 UP，Web HTTP 200，API 以 UID 10001 运行；证据见 `build/stage2b-task6-jre-baseline-compose-verified.log`。该项目专用容器、网络和数据卷已清理。
+
+最终完整安全门禁见 `build/stage2b-task6-full-security-cleanup-final.log` 和 `build/security/`：Java 21 全 reactor 480 项（按既有安排跳过 1 项）零失败、零错误；Java/Node CycloneDX SBOM 分别含 336/540 个组件；`npm audit` 为零漏洞，前端 Lint、Vitest 和生产构建通过。OWASP 以真实依赖报告和 CVSS 7 阈值通过。Testcontainers 的 `docker-java-transport-zerodep:3.7.1` 含 shaded HttpClient、HttpCore 和 HttpCore H2；五条精确 PURL/CVE 规则只适用于经三个 Maven 模块依赖树验证的 test scope，过期日为 2026-10-25，未使用规则会使门禁失败。此前无效的 XML 组合通过红—绿行为测试修正；Windows 临时 Node 目录清理改用路径检查后的 .NET 删除，完整复跑已验证成功。
+
+Trivy 对文件系统和 API、Executor、Demo、Web 四个成品镜像分别运行漏洞/配置与 secrets 扫描，十份 JSON 报告均无命中，归档于 `build/security/`。完整本地门禁退出码为 0；远端 GitHub CI 需在后续推送或 PR 时验证 Ubuntu 执行环境。
