@@ -23,8 +23,8 @@
 - Database migrations only move forward and are tested against a real PostgreSQL 17 + pgvector container.
 - Default logging and tracing must exclude full prompts, raw log bodies, credentials, and sensitive user data.
 - `DEMO_MODE=true` may only enable fault injection in `demo-service`; production configuration must not register those endpoints or silently use fake AI/embeddings.
-- The existing `E:\test\work\java-roadmap` repository and its worktrees must remain untouched.
-- Work only in `E:\test\work\sentinelops-ai`; use small focused files, package-by-feature, TDD, and a commit after each independently reviewable task.
+- The separate `java-roadmap` repository and its worktrees must remain untouched.
+- Work only in the `sentinelops-ai` repository; use small focused files, package-by-feature, TDD, and a commit after each independently reviewable task.
 - Demo completion is a milestone, not a stopping point: after Stage 1 verification and `v0.1.0-demo`, continue directly into Stage 2 unless new authority or external deployment credentials are required.
 
 ---
@@ -226,7 +226,7 @@ Before accepting automated dependency updates, run all release gates; never mix 
 
 ## 7. Master verification commands
 
-Run from `E:\test\work\sentinelops-ai` in PowerShell:
+Run from the `sentinelops-ai` repository root in PowerShell:
 
 ```powershell
 .\mvnw.cmd -T 1C verify

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in the isolated SentinelOps AI worktree created for execution; never edit `E:\test\work\java-roadmap`.
+- Work only in the isolated SentinelOps AI worktree created for execution; never edit the separate `java-roadmap` repository.
 - Compile and test Java with release 21; do not use Java 22+ language or library APIs.
 - PostgreSQL is the sole source of truth; Valkey messages contain only event/execution identifiers and may be duplicated.
 - Use lowercase `snake_case`, `timestamptz`, explicit CHECK/UNIQUE constraints, indexes for every foreign key, a partial unique index for active incident fingerprints, and short transactions.
