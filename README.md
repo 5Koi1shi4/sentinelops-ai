@@ -52,7 +52,7 @@ Stage 2A 的实施与验收记录见 [实施进度](docs/runbooks/stage-2a-progr
 
 ## 完整验收
 
-本地开发基线为 Java 21 与 Node.js `22.17.1`。运行：
+本地开发基线为 Java 21 与 Node.js `22.17.1`；发布流水线固定 Node.js `24.8.0`。运行：
 
 ```powershell
 .\scripts\verify.ps1
@@ -67,6 +67,22 @@ Stage 2A 真实证据、AI Eval 和治理闭环验收运行：
 ```
 
 该脚本使用独立的 `sentinelops-stage2a` Compose 项目和干净数据卷；验收报告保存在 `build/verification/stage2a/<timestamp>/`。真实模型烟测仅在显式配置模型提供方及凭据时执行，不属于默认确定性发布门禁。
+
+## 生产部署候选
+
+生产组合、TLS 入口、外部 OIDC/数据库/模型接入和受限 Executor 目录见 [生产 Compose 手册](docs/deployment/production-compose.md)。它不包含 Demo 服务、故障入口或默认账号。首条可审查的真实执行定义是固定的 `production-http/restart_service`，经人工审批后只能调用运维登记的 `checkout` 目标，并由配置好的 HTTPS 健康探针判断恢复；目标端幂等和 fencing 仍须在实际环境核验。备份、升级和事件响应分别见 [备份恢复](docs/deployment/backup-restore.md)、[升级](docs/deployment/upgrade.md)及[运维](docs/deployment/operations.md)。
+
+发布候选的本地代码、数据库、Eval 和浏览器门禁入口为：
+
+```powershell
+./scripts/verify.ps1 -Release
+./scripts/security-scan.ps1
+./scripts/fault-drill.ps1
+./scripts/restore-check.ps1 -TestDatabaseUrl $env:SENTINELOPS_RESTORE_TEST_URL
+./scripts/smoke.ps1 -Profile production
+```
+
+恢复演练要求独立 PostgreSQL 17 测试 URI；生产烟测要求已授权的 HTTPS 入口、OIDC 身份、签名 Webhook 来源与受限测试服务。缺少这些资源时脚本明确失败，不能将前几个门禁的通过视为完整发布。CI 发布工作流仅打包通过门禁的镜像归档、SBOM 与 SHA-256 校验文件，不自动推送镜像或部署。交付范围和未完成的外部验收见 [已知限制](docs/known-limitations.md)，演示顺序见 [八分钟脚本](docs/demo/eight-minute-script.md)。
 
 如需手动停止 Demo 并清除本地数据：
 

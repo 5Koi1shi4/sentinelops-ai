@@ -670,18 +670,30 @@ git commit -m "test: prove production failure semantics"
 - Create: `docs/known-limitations.md`
 - Modify: `README.md`
 - Modify: `scripts/verify.ps1`
+- Modify: `scripts/verify-stage2a.ps1` for Linux release-runner Java/Maven selection
 - Create: `web/ops-console/e2e/production-smoke.spec.ts`
+- Modify: `web/ops-console/playwright.config.ts` to keep the production smoke out of Demo E2E
+- Modify: root/child `pom.xml` and `web/ops-console/package{,-lock}.json` to align the `1.0.0` release version
+- Create: `tests/production/*-policy.ps1` for version, Compose, backup/restore, and release-workflow gates
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/knowledge/application/RunbookDefinitionValidator.java`
+- Create: `apps/ops-api/src/main/java/io/sentinelops/api/execution/adapter/out/verification/ProductionHttpVerificationProbe.java`
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/execution/adapter/out/verification/DemoHttpVerificationProbe.java`
+- Modify: `apps/ops-executor/src/main/java/io/sentinelops/executor/adapter/DemoHttpRunbookAdapter.java`
+- Modify/Create: focused production Runbook publishing, probe, and profile-isolation tests in `apps/ops-api/src/test/` and `apps/ops-executor/src/test/`
+- Create: `apps/ops-api/src/test/java/io/sentinelops/api/execution/ProductionExecutionPathIT.java` for reviewed publication through signed claim
+- Create: `apps/ops-api/src/main/resources/db/migration/V20__eval_case_append_guard_owner_lock.sql` to retain the Eval case/run serialization lock under least-privilege runtime grants
+- Modify: `apps/ops-api/src/main/java/io/sentinelops/api/audit/eval/EvalStore.java`, `apps/ops-api/src/main/java/io/sentinelops/api/shared/config/ProductionStartupValidator.java`, and their runtime-role/configuration tests for production acceptance failures
 
 **Interfaces:**
 - Produces: production Compose using external OIDC/model/data-source secrets and either external managed PostgreSQL/Valkey or explicitly selected local services.
 - Produces: TLS reverse-proxy example, backup/restore validation, rolling upgrade/migration procedure, clean-environment smoke and immutable release artifacts.
 - Consumes: every prior feature and verification gate.
 
-- [ ] **Step 1: Write failing production smoke and configuration policy tests**
+- [x] **Step 1: Write failing production smoke and configuration policy tests**
 
 Smoke checks unauthenticated health only, OIDC redirect, authenticated incident list, signed webhook, one read-only diagnosis/manual degraded result, approval denial for wrong role, and absence/404 of every Demo fault path. Compose-policy test asserts no default password, wildcard origin, host Docker socket, privileged container, embedded API key or executor DB credential.
 
-- [ ] **Step 2: Run production config/smoke checks and observe failure**
+- [x] **Step 2: Run production config/smoke checks and observe failure**
 
 Run:
 
@@ -692,17 +704,19 @@ docker compose -p sentinelops-prod -f .\deploy\compose\compose.production.yml co
 
 Expected: FAIL because production deployment/runbooks and smoke script are not complete.
 
-- [ ] **Step 3: Implement hardened production Compose and TLS example**
+- [x] **Step 3: Implement hardened production Compose and TLS example**
 
 Application containers run as non-root with `read_only: true`, `tmpfs` for writable temp, `cap_drop: [ALL]`, `no-new-privileges`, health checks, restart policy and CPU/memory limits. Executor has only target-specific secret mounts/network. Caddy terminates HTTPS for a configured domain; HSTS is enabled only when TLS is active. Required variables use `${NAME:?message}` so missing secrets fail Compose rendering.
 
 Production profile never includes demo-service, fault endpoints, Demo realm import, ephemeral ticket keys, deterministic model or public database/Valkey ports.
 
-- [ ] **Step 4: Implement safe backup and restore verification**
+Close the Task 4 publication gap before release: only the reviewed `production-http/restart_service` definition with bounded `replicas` and `production_checkout_health` may be published as the first real path. The probe uses one configured HTTPS endpoint, production excludes Demo adapter/probe beans, and unknown results remain manual until target-side idempotency and fencing are verified. Prove publication in PostgreSQL 17 and both profile exclusions with tests.
+
+- [x] **Step 4: Implement safe backup and restore verification**
 
 `backup.ps1` uses `pg_dump --format=custom --no-owner --no-acl` to a timestamped file plus SHA-256 manifest and captures current Flyway version. `restore-check.ps1` creates a uniquely named temporary database inside an explicitly provided test PostgreSQL instance, restores, runs Flyway validation and read-only integrity queries, then removes only that validated temporary database in `finally`. It refuses production hostnames unless `-AllowProductionRestoreTarget` is explicitly supplied and still never overwrites an existing database.
 
-- [ ] **Step 5: Complete release documentation and CI workflow**
+- [x] **Step 5: Complete release documentation and CI workflow**
 
 Document prerequisites, secret generation, OIDC client/audience, database roles/migration job, Prometheus/Loki/model configuration, DNS/TLS, resource sizing, backup schedule, restore drill, upgrade/rollback, key rotation, incident response for SentinelOps itself, and known limits. The eight-minute script follows the approved 8-step story and clearly labels simulated versus real integrations.
 
@@ -729,7 +743,7 @@ Expected:
 - scans have no unexpired/unreviewed critical finding;
 - backup restores into a temporary database and validates migrations/data;
 - production smoke proves Demo endpoints absent;
-- `git status --short` is empty.
+- after the verified task commit, `git status --short` is empty.
 
 - [ ] **Step 7: Commit release artifacts and tag locally**
 
@@ -744,4 +758,4 @@ Expected: local annotated tag exists and final report accurately separates imple
 
 - [ ] **Step 8: Prepare external deployment handoff without assuming credentials**
 
-If the user supplies a host/cloud project, domain, OIDC client and secret delivery mechanism, execute `docs/deployment/production-compose.md` against that target and run production smoke. If those external resources are absent, stop after the verified local `v1.0.0`, report exactly what is deployment-ready, and request only the missing resources; do not fabricate a public deployment.
+If the user supplies a host/cloud project, domain, OIDC client and secret delivery mechanism, execute `docs/deployment/production-compose.md` against that target and run production smoke. If those external resources are absent, stop after the verified local release candidate without creating the `v1.0.0` tag, report exactly what is deployment-ready, and request only the missing resources; do not fabricate a public deployment.

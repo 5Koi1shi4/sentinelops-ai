@@ -153,6 +153,11 @@ try {
     } else {
         Remove-Item Env:SENTINELOPS_TASK7_LOAD_LIMIT, Env:SENTINELOPS_TASK7_LOAD_BURST -ErrorAction SilentlyContinue
     }
+    if ($Scenario -in @('full', 'model')) {
+        # 专项自建 PostgreSQL/Valkey 容器且模型时限严格，先于独立 Compose 栈运行。
+        $script:currentScenario = 'modelAndDependencies'
+        & (Join-Path $repo 'tests/faults/model-timeout.ps1')
+    }
     Invoke-Compose -Name 'Compose configuration' -Arguments @('config', '--quiet') -Log 'compose-config.log'
     Assert-HostPortsAvailable
     $stackTouched = $true
@@ -163,10 +168,6 @@ try {
         & (Join-Path $repo 'tests/faults/executor-crash.ps1')
         $script:currentScenario = 'reclaimAndDuplicate'
         & (Join-Path $repo 'tests/faults/reclaim-duplicate.ps1')
-    }
-    if ($Scenario -in @('full', 'model')) {
-        $script:currentScenario = 'modelAndDependencies'
-        & (Join-Path $repo 'tests/faults/model-timeout.ps1')
     }
     if ($Scenario -in @('full', 'redis')) {
         $script:currentScenario = 'redis'

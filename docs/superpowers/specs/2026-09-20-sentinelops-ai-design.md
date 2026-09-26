@@ -391,6 +391,8 @@ Redis 只是唤醒通道。消息允许重复或延迟，所有最终判断由 P
 
 Executor 的正式结果回报必须先有对应尝试的阶段记录；控制平面在同一事务追加 `acknowledged` 或 `failed_before_dispatch` 终态。租约为 30 秒，Executor 每 10 秒续租；两次连续暂时性续租失败后停止新的分发，票据过期不能开始新步骤。只有经目标契约验证同时具备稳定幂等键和 fencing 的操作可以在已分发但结果未知后重放。当前只有目标为 `demo-checkout` 的隔离 Demo `demo-http/recover_connection_pool` 满足此条件；新增生产适配器须逐项证明后才能加入重放白名单。
 
+首条生产执行路径固定为 `production-http/restart_service`，发布定义只接受已审查的单步、`replicas` 1–3 和 `production_checkout_health` 探针；目标别名必须同时匹配审批快照和 Executor 的只读 HTTP 动作目录。生产验证只访问部署者配置的固定 HTTPS 健康端点，不采纳 Runbook 或模型提供的 URL。生产 profile 不注册 Demo HTTP 执行适配器或 Demo 健康探针。目标尚未证明持久化幂等键与 fencing 契约前，分发后结果未知一律升级人工，不自动重放。
+
 ### 12.3 通用语义
 
 - 改变状态的命令必须携带 `Idempotency-Key`。

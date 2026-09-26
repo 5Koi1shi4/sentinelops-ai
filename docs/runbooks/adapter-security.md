@@ -62,4 +62,4 @@ Task 4 引入 `production-http` 与 `kubernetes` 两种 Executor 适配器。只
 
 ## 投运边界
 
-生产目录、OAuth2 目标账号、Kubernetes ServiceAccount、网络策略以及目标端幂等/fencing 验证必须由部署方按实际环境配置。控制平面目前仍将 Runbook 发布定义限定在 Demo 操作；要使新适配器成为端到端生产执行路径，还需把控制平面的发布白名单与真实健康验证同步扩展并做集成测试。不能通过直接修改数据库或复用 Demo 版本绕过发布与审批。
+生产目录、OAuth2 目标账号、Kubernetes ServiceAccount、网络策略以及目标端幂等/fencing 验证必须由部署方按实际环境配置。控制平面现在允许经独立评审发布固定的 `production-http/restart_service` 定义，参数仅为 1–3 的 `replicas`，目标别名固定为 `checkout`，恢复验证固定为 `production_checkout_health` 的 HTTPS JSON readiness。真实 PostgreSQL 17 集成测试覆盖发布后的不可变性，以及经审批创建 execution、领取并签出绑定目标/操作/参数的票据。生产 profile 不注册 Demo HTTP 适配器或 Demo 健康探针。实际外部目标的调用、幂等键与 fencing 持久化仍须在部署环境验证；未知结果继续升级人工。Kubernetes 动作目前没有进入控制平面发布白名单，不能通过直接修改数据库或复用 Demo 版本绕过发布与审批。

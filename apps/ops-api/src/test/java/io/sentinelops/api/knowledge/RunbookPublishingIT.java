@@ -51,6 +51,32 @@ class RunbookPublishingIT extends PostgresIntegrationTest {
                 .param("id", draft.id().toString()).query(Long.class).single()).isEqualTo(1);
     }
 
+    @Test void productionHttpActionUsesTheSameReviewedImmutablePublicationPath() {
+        String runbookKey = "RB-" + key();
+        var definition = (tools.jackson.databind.node.ObjectNode) input(runbookKey).definition();
+        definition.put("adapterId", "production-http");
+        var replica = (tools.jackson.databind.node.ObjectNode) definition.path("parameters")
+                .path("properties").path("replicas");
+        replica.put("maximum", 3);
+        var step = (tools.jackson.databind.node.ObjectNode) definition.path("steps").get(0);
+        step.put("stepId", "restart-one");
+        step.put("operation", "restart_service");
+        ((tools.jackson.databind.node.ObjectNode) definition.path("verification"))
+                .put("probe", "production_checkout_health");
+        var draft = runbooks.createDraft(runbookKey,
+                new RunbookApplicationService.DraftInput(SERVICE, "Checkout restart", "operations",
+                        definition, "# Checkout restart\n\nReviewed production HTTP recovery"),
+                key(), author);
+
+        var published = publish(draft);
+        assertThat(published.lifecycle()).isEqualTo("published");
+        assertThat(published.definition().path("adapterId").asString()).isEqualTo("production-http");
+        assertThat(jdbc.sql("select adapter_id from runbook_version where id=:id")
+                .param("id", published.id()).query(String.class).single()).isEqualTo("production-http");
+        assertThatThrownBy(() -> jdbc.sql("update runbook_version set definition='{}' where id=:id")
+                .param("id", published.id()).update()).isInstanceOf(DataAccessException.class);
+    }
+
     @Test void publishedVersionCannotBeUpdatedOrDeleted() {
         var published = publish(create());
         assertThatThrownBy(() -> jdbc.sql("update runbook_version set definition='{}' where id=:id")

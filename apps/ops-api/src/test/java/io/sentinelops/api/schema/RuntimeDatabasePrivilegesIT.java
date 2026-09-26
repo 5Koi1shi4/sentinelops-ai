@@ -196,6 +196,52 @@ class RuntimeDatabasePrivilegesIT {
     }
 
     @Test
+    void runtimeRoleCanAppendEvalCasesWhileDatasetRemainsImmutable() throws SQLException {
+        UUID principalId = UUID.randomUUID();
+        UUID datasetId = UUID.randomUUID();
+        UUID caseId = UUID.randomUUID();
+
+        try (Connection app = appConnection()) {
+            try (Statement permissions = app.createStatement();
+                    ResultSet result = permissions.executeQuery(
+                            "select has_table_privilege(current_user, 'public.eval_dataset', 'UPDATE')")) {
+                assertTrue(result.next());
+                assertFalse(result.getBoolean(1), "runtime role must not update immutable Eval datasets");
+            }
+            try (PreparedStatement principal = app.prepareStatement("""
+                    insert into principal(id, issuer, subject, display_name, created_at)
+                    values (?, 'https://runtime-privileges.invalid', ?, 'Eval fixture', clock_timestamp())
+                    """)) {
+                principal.setObject(1, principalId);
+                principal.setString(2, "eval-" + principalId);
+                assertEquals(1, principal.executeUpdate());
+            }
+            try (PreparedStatement dataset = app.prepareStatement("""
+                    insert into eval_dataset(id, dataset_key, version_number, checksum,
+                                             created_by_principal_id, created_at)
+                    values (?, ?, 1, ?, ?, clock_timestamp())
+                    """)) {
+                dataset.setObject(1, datasetId);
+                dataset.setString(2, "runtime-" + datasetId);
+                dataset.setString(3, "checksum-" + datasetId);
+                dataset.setObject(4, principalId);
+                assertEquals(1, dataset.executeUpdate());
+            }
+            try (PreparedStatement item = app.prepareStatement("""
+                    insert into eval_case(id, dataset_id, case_key, input_fixture,
+                                          expectation, tags, checksum)
+                    values (?, ?, 'runtime-case', '{}'::jsonb, '{}'::jsonb,
+                            array['runtime'], ?)
+                    """)) {
+                item.setObject(1, caseId);
+                item.setObject(2, datasetId);
+                item.setString(3, "checksum-" + caseId);
+                assertEquals(1, item.executeUpdate());
+            }
+        }
+    }
+
+    @Test
     void runtimeRoleHasNoDatabaseDdlRoleOrExtensionPrivileges() throws SQLException {
         try (Connection app = appConnection(); Statement statement = app.createStatement()) {
             try (ResultSet result = statement.executeQuery("select current_user")) {
@@ -456,7 +502,7 @@ class RuntimeDatabasePrivilegesIT {
                 assertEquals(rolelessPostgres.getUsername(), result.getString(1));
                 assertFalse(result.getBoolean(2), "migrations must not create the runtime role");
                 assertFalse(result.getBoolean(3), "migrations must not create the migration role");
-                assertEquals("19", result.getString(4));
+                assertEquals("20", result.getString(4));
                 assertEquals(rolelessPostgres.getUsername(), result.getString(5));
                 assertTrue(result.getBoolean(6), "the webhook nonce RLS policy must exist after migration");
             }

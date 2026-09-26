@@ -45,7 +45,7 @@ class EvalStore {
                 values(:id,:key,:version,:hash,:principal,clock_timestamp()) on conflict(dataset_key,version_number) do nothing
                 """).param("id",candidate).param("key",dataset.key()).param("version",dataset.version())
                 .param("hash",dataset.checksum()).param("principal",principal).update();
-        var row=jdbc.sql("select id,checksum from eval_dataset where dataset_key=:key and version_number=:version for update")
+        var row=jdbc.sql("select id,checksum from eval_dataset where dataset_key=:key and version_number=:version")
                 .param("key",dataset.key()).param("version",dataset.version()).query().singleRow();
         if (!dataset.checksum().equals(row.get("checksum"))) throw problem(HttpStatus.CONFLICT,"EVAL_DATASET_VERSION_CONFLICT");
         UUID id=(UUID)row.get("id");

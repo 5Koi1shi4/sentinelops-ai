@@ -1,0 +1,337 @@
+name: sentinelops-production
+
+services:
+  ops-api:
+    image: sentinelops/ops-api:1.0.0
+    build:
+      context: ../..
+      dockerfile: apps/ops-api/Dockerfile
+    user: "10001:10001"
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_CONFIG_IMPORT: optional:configtree:/run/secrets/
+      SENTINELOPS_DB_URL: ${SENTINELOPS_DB_URL:?Set the managed or selected local PostgreSQL JDBC URL}
+      SENTINELOPS_DB_USERNAME: ${SENTINELOPS_DB_USERNAME:?Set the least-privilege application database role}
+      SENTINELOPS_DB_MIGRATOR_USERNAME: ${SENTINELOPS_DB_MIGRATOR_USERNAME:?Set the migration-only database role}
+      SENTINELOPS_VALKEY_HOST: ${SENTINELOPS_VALKEY_HOST:?Set the managed or selected local Valkey host}
+      SENTINELOPS_VALKEY_PORT: ${SENTINELOPS_VALKEY_PORT:?Set the managed or selected local Valkey port}
+      SPRING_DATA_REDIS_USERNAME: ${SENTINELOPS_VALKEY_USERNAME:?Set the Valkey ACL username}
+      SPRING_DATA_REDIS_SSL_ENABLED: ${SENTINELOPS_VALKEY_SSL_ENABLED:?Set true for an external Valkey endpoint or false only for local-data}
+      SENTINELOPS_OIDC_ISSUER: ${SENTINELOPS_OIDC_ISSUER:?Set the HTTPS OIDC issuer}
+      SENTINELOPS_OIDC_JWK_SET_URI: ${SENTINELOPS_OIDC_JWK_SET_URI:?Set the HTTPS OIDC JWKS URL}
+      SENTINELOPS_ALLOWED_ORIGINS: ${SENTINELOPS_ALLOWED_ORIGINS:?Set the exact HTTPS browser origin}
+      SENTINELOPS_EXECUTION_SIGNING_KEY_REF: env:SENTINELOPS_EXECUTION_SIGNING_PRIVATE_JWK
+      SENTINELOPS_WEBHOOK_SOURCE_REFS: alertmanager=env:SENTINELOPS_WEBHOOK_ALERTMANAGER_SECRET
+      SENTINELOPS_EVIDENCE_MODE: real
+      SENTINELOPS_PROMETHEUS_URL: ${SENTINELOPS_PROMETHEUS_URL:?Set the approved Prometheus base URL}
+      SENTINELOPS_LOKI_URL: ${SENTINELOPS_LOKI_URL:?Set the approved Loki base URL}
+      SENTINELOPS_AI_PROVIDER: ${SENTINELOPS_AI_PROVIDER:?Set openai-compatible or manual-only}
+      SENTINELOPS_AI_BASE_URL: ${SENTINELOPS_AI_BASE_URL:?Set the approved HTTPS model endpoint}
+      SENTINELOPS_AI_MODEL: ${SENTINELOPS_AI_MODEL:?Set the production chat model name}
+      SENTINELOPS_AI_EMBEDDING_MODEL: ${SENTINELOPS_AI_EMBEDDING_MODEL:?Set the production embedding model name}
+      SENTINELOPS_AI_EMBEDDING_DIMENSIONS: ${SENTINELOPS_AI_EMBEDDING_DIMENSIONS:?Set the supported embedding size, currently 1536}
+      SENTINELOPS_AI_API_KEY_SECRET_REF: env:SENTINELOPS_MODEL_API_KEY
+      SENTINELOPS_PROD_CHECKOUT_HEALTH_URL: ${SENTINELOPS_PROD_CHECKOUT_HEALTH_URL:?Set the approved production HTTPS readiness URL}
+    secrets:
+      - source: db_app_password
+        target: spring.datasource.password
+      - source: db_migrator_password
+        target: spring.flyway.password
+      - source: valkey_password
+        target: spring.data.redis.password
+      - source: execution_signing_key
+        target: SENTINELOPS_EXECUTION_SIGNING_PRIVATE_JWK
+      - source: alertmanager_webhook_secret
+        target: SENTINELOPS_WEBHOOK_ALERTMANAGER_SECRET
+      - source: model_api_key
+        target: SENTINELOPS_MODEL_API_KEY
+    networks:
+      - frontend
+      - control-plane
+      - api-egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, "wget -qO- http://127.0.0.1:8080/actuator/health/readiness | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 2g
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+  ops-executor:
+    image: sentinelops/ops-executor:1.0.0
+    build:
+      context: ../..
+      dockerfile: apps/ops-executor/Dockerfile
+    user: "10001:10001"
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      SPRING_CONFIG_IMPORT: optional:configtree:/run/secrets/
+      SENTINELOPS_EXECUTOR_ID: ${SENTINELOPS_EXECUTOR_ID:?Set a unique Executor identity}
+      SENTINELOPS_VALKEY_HOST: ${SENTINELOPS_VALKEY_HOST:?Set the managed or selected local Valkey host}
+      SENTINELOPS_VALKEY_PORT: ${SENTINELOPS_VALKEY_PORT:?Set the managed or selected local Valkey port}
+      SPRING_DATA_REDIS_USERNAME: ${SENTINELOPS_VALKEY_USERNAME:?Set the Valkey ACL username}
+      SPRING_DATA_REDIS_SSL_ENABLED: ${SENTINELOPS_VALKEY_SSL_ENABLED:?Set true for an external Valkey endpoint or false only for local-data}
+      SENTINELOPS_CONTROL_PLANE_URL: http://ops-api:8080
+      SENTINELOPS_OAUTH2_TOKEN_URI: ${SENTINELOPS_OIDC_TOKEN_URI:?Set the HTTPS OIDC token URL}
+      SENTINELOPS_EXECUTOR_CLIENT_ID: ${SENTINELOPS_EXECUTOR_CLIENT_ID:?Set a dedicated, least-privilege Executor OIDC client}
+      SENTINELOPS_TARGETS_HTTP_CATALOG_FILE: /run/config/http-actions.json
+    secrets:
+      - source: valkey_password
+        target: spring.data.redis.password
+      - source: executor_oauth_client_secret
+        target: sentinelops.oauth2.client-secret
+    volumes:
+      - type: bind
+        source: ${SENTINELOPS_TARGETS_HTTP_CATALOG_FILE:?Set the reviewed production HTTP action catalog file}
+        target: /run/config/http-actions.json
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - control-plane
+      - executor-egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, "wget -qO- http://127.0.0.1:8080/actuator/health/readiness | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1g
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+  web:
+    image: sentinelops/ops-console:1.0.0
+    build:
+      context: ../..
+      dockerfile: web/ops-console/Dockerfile
+      args:
+        VITE_OIDC_ISSUER: ${SENTINELOPS_OIDC_ISSUER:?Set the HTTPS OIDC issuer}
+        VITE_OIDC_CLIENT_ID: ${SENTINELOPS_OIDC_BROWSER_CLIENT_ID:?Set the browser OIDC client ID}
+        VITE_OIDC_REDIRECT_URI: ${SENTINELOPS_OIDC_REDIRECT_URI:?Set the registered HTTPS browser redirect URI}
+    environment:
+      OIDC_ORIGIN: ${SENTINELOPS_OIDC_BROWSER_ORIGIN:?Set the HTTPS OIDC origin for browser CSP}
+    networks:
+      - frontend
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, "wget -qO- http://127.0.0.1:8080/ | grep -q SentinelOps"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    cpus: "0.5"
+    mem_limit: 256m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    user: "10001:10001"
+    environment:
+      SENTINELOPS_DOMAIN: ${SENTINELOPS_DOMAIN:?Set the production TLS domain}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: bind
+        source: ${SENTINELOPS_CADDY_DATA_DIR:?Set a persistent host directory writable by UID 10001}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SENTINELOPS_CADDY_CONFIG_DIR:?Set a persistent host directory writable by UID 10001}
+        target: /config
+        bind:
+          create_host_path: false
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    networks:
+      - frontend
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, caddy, validate, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    cpus: "0.5"
+    mem_limit: 256m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17-trixie
+    profiles: ["local-data"]
+    environment:
+      POSTGRES_DB: sentinelops
+      POSTGRES_USER: sentinelops
+      POSTGRES_PASSWORD_FILE: /run/secrets/sentinelops_db_admin_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    secrets:
+      - source: db_admin_password
+        target: sentinelops_db_admin_password
+    networks:
+      - control-plane
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 2g
+
+  postgres-privileges:
+    image: pgvector/pgvector:0.8.6-pg17-trixie
+    profiles: ["local-data"]
+    entrypoint: ["/bin/sh", "/opt/sentinelops/postgres/provision-roles.sh"]
+    environment:
+      SENTINELOPS_DB_ADMIN_USER: sentinelops
+      SENTINELOPS_DB_ADMIN_PASSWORD_FILE: /run/secrets/sentinelops_db_admin_password
+      SENTINELOPS_DB_MIGRATOR_PASSWORD_FILE: /run/secrets/sentinelops_db_migrator_password
+      SENTINELOPS_DB_APP_PASSWORD_FILE: /run/secrets/sentinelops_db_app_password
+      SENTINELOPS_DB_NAME: sentinelops
+      SENTINELOPS_DB_HOST: postgres
+    volumes:
+      - type: bind
+        source: ../postgres/provision-roles.sh
+        target: /opt/sentinelops/postgres/provision-roles.sh
+        read_only: true
+      - type: bind
+        source: ../postgres/init
+        target: /opt/sentinelops/postgres/init
+        read_only: true
+      - type: bind
+        source: ../postgres/grants
+        target: /opt/sentinelops/postgres/grants
+        read_only: true
+    secrets:
+      - source: db_admin_password
+        target: sentinelops_db_admin_password
+      - source: db_migrator_password
+        target: sentinelops_db_migrator_password
+      - source: db_app_password
+        target: sentinelops_db_app_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - control-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  valkey:
+    image: valkey/valkey:8.1.10-alpine3.24
+    profiles: ["local-data"]
+    user: "999:1000"
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec", "--aclfile", "/run/secrets/valkey-users.acl"]
+    environment:
+      SENTINELOPS_VALKEY_USERNAME: ${SENTINELOPS_VALKEY_USERNAME:?Set the Valkey ACL username}
+    volumes:
+      - valkey_data:/data
+    secrets:
+      - source: valkey_password
+        target: valkey_password
+      - source: valkey_acl
+        target: valkey-users.acl
+    networks:
+      - control-plane
+    healthcheck:
+      test: [CMD-SHELL, "export VALKEYCLI_AUTH=\"$$(cat /run/secrets/valkey_password)\"; valkey-cli --user \"$${SENTINELOPS_VALKEY_USERNAME}\" ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 512m
+
+networks:
+  frontend:
+    internal: true
+  control-plane:
+    internal: true
+  api-egress:
+    driver: bridge
+  executor-egress:
+    external: true
+    name: ${SENTINELOPS_EXECUTOR_EGRESS_NETWORK:?Set a host-firewalled Docker network for OIDC, Valkey, and allowlisted targets}
+  edge:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  valkey_data:
+
+secrets:
+  db_admin_password:
+    file: ${SENTINELOPS_DB_ADMIN_PASSWORD_FILE:?Set a protected file for the local-only PostgreSQL administrator password}
+  db_migrator_password:
+    file: ${SENTINELOPS_DB_MIGRATOR_PASSWORD_FILE:?Set the migration-role password secret file}
+  db_app_password:
+    file: ${SENTINELOPS_DB_APP_PASSWORD_FILE:?Set the application-role password secret file}
+  valkey_password:
+    file: ${SENTINELOPS_VALKEY_PASSWORD_FILE:?Set the Valkey ACL password secret file}
+  valkey_acl:
+    file: ${SENTINELOPS_VALKEY_ACL_FILE:?Set the local-only Valkey ACL file}
+  execution_signing_key:
+    file: ${SENTINELOPS_EXECUTION_SIGNING_KEY_FILE:?Set the execution signing JWK secret file}
+  alertmanager_webhook_secret:
+    file: ${SENTINELOPS_WEBHOOK_SECRET_FILE:?Set the Alertmanager webhook HMAC secret file}
+  model_api_key:
+    file: ${SENTINELOPS_MODEL_API_KEY_FILE:?Set the external model API key secret file}
+  executor_oauth_client_secret:
+    file: ${SENTINELOPS_EXECUTOR_CLIENT_SECRET_FILE:?Set the dedicated Executor OIDC client secret file}

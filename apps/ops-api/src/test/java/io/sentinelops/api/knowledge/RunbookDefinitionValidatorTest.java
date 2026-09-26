@@ -24,6 +24,26 @@ class RunbookDefinitionValidatorTest {
     }
 
     @Test
+    void acceptsOnlyTheFixedProductionHttpActionWithItsRealHealthProbe() {
+        ObjectNode production = productionDefinition();
+        assertThatCode(() -> validator.validate(RUNBOOK_KEY, production))
+                .doesNotThrowAnyException();
+
+        ObjectNode wrongOperation = productionDefinition();
+        ((ObjectNode) ((ArrayNode) wrongOperation.get("steps")).get(0))
+                .put("operation", "execute_sql");
+        assertRejected(RUNBOOK_KEY, wrongOperation);
+
+        ObjectNode demoProbe = productionDefinition();
+        ((ObjectNode) demoProbe.get("verification")).put("probe", "demo_checkout_health");
+        assertRejected(RUNBOOK_KEY, demoProbe);
+
+        ObjectNode broadParameters = productionDefinition();
+        replicaSchema(broadParameters).put("maximum", 100);
+        assertRejected(RUNBOOK_KEY, broadParameters);
+    }
+
+    @Test
     void rejectsNullEmptyAndNonObjectDefinitions() {
         assertRejected(RUNBOOK_KEY, null);
         assertRejected(RUNBOOK_KEY, objectMapper.createObjectNode());
@@ -207,6 +227,18 @@ class RunbookDefinitionValidatorTest {
         verification.put("intervalSeconds", 5);
         definition.set("verification", verification);
         definition.putNull("rollback");
+        return definition;
+    }
+
+    private ObjectNode productionDefinition() {
+        ObjectNode definition = validDefinition();
+        definition.put("adapterId", "production-http");
+        replicaSchema(definition).put("maximum", 3);
+        ObjectNode step = (ObjectNode) ((ArrayNode) definition.get("steps")).get(0);
+        step.put("stepId", "restart-one");
+        step.put("operation", "restart_service");
+        ((ObjectNode) definition.get("verification"))
+                .put("probe", "production_checkout_health");
         return definition;
     }
 

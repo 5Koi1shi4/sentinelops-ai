@@ -5,6 +5,10 @@ const verificationOutput =
 
 export default defineConfig({
     testDir: process.env.SENTINELOPS_FAULT_TEST_DIR ?? "./e2e",
+    testIgnore:
+        process.env.SENTINELOPS_PRODUCTION_SMOKE === "true"
+            ? []
+            : ["**/production-smoke.spec.ts"],
     fullyParallel: false,
     workers: 1,
     timeout: 180_000,

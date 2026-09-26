@@ -31,6 +31,10 @@ abstract class ExecutionFixtureSupport extends PostgresIntegrationTest {
     }
 
     protected Fixture approvedFixture(UUID runbookVersionId) {
+        return approvedFixture(runbookVersionId, "demo-checkout");
+    }
+
+    protected Fixture approvedFixture(UUID runbookVersionId, String targetAlias) {
         UUID serviceId = jdbc.sql("select id from service_catalog where service_key = 'checkout-api'")
                 .query(UUID.class)
                 .single();
@@ -101,7 +105,7 @@ abstract class ExecutionFixtureSupport extends PostgresIntegrationTest {
                         ) values (
                           :id, :incidentId, :proposalId, :proposalHash, :requesterId,
                           'stage1-v1', 1, true, 'approved', 1,
-                          'demo-checkout', :createdAt, :expiresAt, :decidedAt
+                          :targetAlias, :createdAt, :expiresAt, :decidedAt
                         )
                         """)
                 .param("id", approvalId)
@@ -109,6 +113,7 @@ abstract class ExecutionFixtureSupport extends PostgresIntegrationTest {
                 .param("proposalId", proposalId)
                 .param("proposalHash", proposalHash)
                 .param("requesterId", requesterId)
+                .param("targetAlias", targetAlias)
                 .param("createdAt", now.minusMinutes(1))
                 .param("expiresAt", now.plusMinutes(7))
                 .param("decidedAt", now)

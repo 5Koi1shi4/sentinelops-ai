@@ -76,3 +76,17 @@ Executor 停机与 Valkey 中断均从真实事故、诊断、审批走到待执
 Webhook 的 Demo 专用高流量来源配置为每分钟 10,000 次、突发 200 次，正式默认仍为每分钟 60 次、突发 20 次。默认限流场景验证 429 与 `Retry-After`；红阶段低限额风暴仅接受 79/6,000 次，`build/stage2b-task7-alert-storm-baseline-red.log` 保存该证据。修复后同一事故指纹的 60 秒、每秒 100 次签名投递全部接受，形成 6,000 条 occurrence event，始终只有一个活跃事故。最终两轮完整报告 `build/verification/faults/20260925-190346-cdbe1ded/report.json`、`build/verification/faults/20260925-192747-157a24b2/report.json` 均为 PASS：各接受 6,000/6,000 次，p95 分别为 17.60/13.76 毫秒，恢复场景各一次副作用，清理均成功。两轮之间 E: 外置盘短暂断连使一次运行中断，Docker Desktop 的 E: bind mount 随后失效；中断项目已按独立项目名清理，重启 Docker Desktop 后只读挂载检查通过，再进行上述第二轮完整复跑。中断与启动失败的记录未计入通过次数。
 
 Java 21 全 reactor 回归 `build/stage2b-task7-all-java-it-final.log`：API 419 项（既有安排跳过 1 项）、Executor 58 项、Demo 13 项，零失败；前端 Lint 和格式检查通过。只读复审未发现阻断或高优先级问题。外部生产服务故障由上述受控依赖和隔离栈模拟，当前证据属于本地验收。
+
+## Task 8：生产部署与发布候选（进行中）
+
+生产 Runbook 发布缺口已按固定第一条路径补齐：`production-http/restart_service` 仅接受 `replicas` 1–3，目标 `checkout` 与 `production_checkout_health` 为固定契约。发布须经独立评审，已发布定义不可修改；`build/stage2b-task8-production-publishing-green.log` 的 PostgreSQL 17 专项通过。新增生产健康探针，并在 production profile 排除 Demo HTTP 适配器与 Demo 健康探针，聚焦测试见 `build/stage2b-task8-production-api-focused-green.log` 和 `build/stage2b-task8-production-executor-focused-green.log`。`ProductionExecutionPathIT` 又在真实 PostgreSQL 17 中核验从评审发布、已批准请求、创建 execution 到 claim 的签名票据，固定操作/目标/参数与版本 checksum 一致；结果见 `build/stage2b-task8-production-execution-path-green.log`（1 项通过）。这些测试不替代外部目标的幂等/fencing 或生产域名烟测。
+
+生产 Compose、Caddy、env 样例和策略测试已落地，配置渲染与 Caddy 配置验证通过；发布候选版本号由 POM/Web lock 一致性测试约束为 `1.0.0`。外部 PostgreSQL URL 强制 `sslmode=verify-full`，外部 Valkey 强制 TLS；本地 `local-data` 服务别名才允许内部明文。该配置的 6 项 Java 测试、Compose 策略和配置解析均通过。备份恢复脚本、发布工作流、升级/运维/演示手册已完成；隔离 PostgreSQL 17.11 的归档、SHA-256、临时库恢复、Flyway validate 和清理演练已通过。目标环境的恢复 URL 尚未提供，这一结果仅证明本地演练。生产烟测先有预期红灯：缺少 HTTPS 目标时返回连接失败，缺配置时脚本写脱敏失败报告；Demo 浏览器集与生产烟测现显式隔离。
+
+`verify.ps1 -Release` 已接入版本/部署/备份/CI 策略和 Stage 2A 完整门禁。首次完整运行的 Java、前端、两轮 Eval、Compose 和诊断门禁通过，但 6 项浏览器用例中的治理路径返回 503。先去除应用层数据集读取中不必要的 `FOR UPDATE`，第二轮浏览器仍为 5/6 项通过。隔离 PostgreSQL 日志与运行账号红灯测试进一步定位到 `eval_case` 追加保护触发器对只追加的 `eval_dataset` 加行锁，应用账号无 UPDATE 权限。V20 让该触发器以受限所有者权限执行并固定安全 `search_path`，保持行锁与“运行后的数据集不能追加案例”约束；真实 PostgreSQL 17 运行账号测试转绿，原失败浏览器用例在全新隔离栈中 1/1 通过，栈已清理。
+
+额外复核发现 pgJDBC 自定义工厂可绕过 `sslmode=verify-full` 的证书校验；生产启动校验已先红后绿拒绝不验证工厂、自定义主机名验证器和 URL 内联账号密码（7 项 Java 测试通过）。发布工作流现对最终版本化镜像归档本身再运行固定 Trivy 漏洞与密钥扫描，避免扫描对象和上传对象不一致；策略红—绿及 PowerShell 解析检查已通过。包含 V20 的完整 `verify.ps1 -Release` 已于 2026-09-25 退出码 0，报告为 `build/verification/stage2a/20260925-221654/`：Java 21 全 reactor、前端、两轮 Eval、隔离 Compose、真实 Prometheus/Loki、6 项 Playwright 浏览器流程及提示注入专项均通过；隔离栈已清理。V20 的无业务账号和最小权限业务账号两种 PostgreSQL 17 迁移/权限测试共 18 项通过（`build/stage2b-task8-v20-schema-roles-green.log`），原失败治理浏览器用例在新迁移栈 1/1 通过（`build/stage2b-task8-eval-v20-browser.log`）。完整 `security-scan.ps1` 已退出码 0（`build/stage2b-task8-security-final.log`）：Java/前端测试、OWASP 审计、两份 CycloneDX SBOM，以及文件系统与四个成品镜像的漏洞/密钥 Trivy 扫描均通过；十份本轮 JSON 报告保存在 `build/security/`。
+
+首次最终故障演练在完整 Compose 栈运行期间启动了另一个 PostgreSQL/Valkey Testcontainers 专项，3 秒模型预算耗尽前没有发出 HTTP 请求，导致 2 项依赖故障断言失败；报告 `build/verification/faults/20260925-225657-9f0aeaa9/report.json` 已记录失败和清理。该专项单独复跑 5/5 通过（`build/stage2b-task8-dependency-isolated-rerun.log`）。故障脚本现先运行自带容器的模型/依赖专项，再启动互不依赖的 Compose 栈，不放宽模型时限或断言。完整复跑 `build/verification/faults/20260926-093015-d4c33a07/report.json` 为 PASS：模型/依赖 5 项、提示注入 3 项、租约与重复投递 10 项通过；Executor 与 Valkey 中断恢复各仅一次目标副作用；告警风暴接受 6,000/6,000 次，只有一个活跃事故，p95 13.27 毫秒；隔离栈清理成功。
+
+目标环境恢复、外部生产烟测及远端发布工作流尚无运行条件。所有必要门禁通过前不创建 `v1.0.0` 标签，也不宣称公网部署完成。

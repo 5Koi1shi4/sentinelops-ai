@@ -96,16 +96,32 @@ function Invoke-OptionalProviderSmoke {
 
 Push-Location $repo
 try {
-    $java = Get-ChildItem -LiteralPath (Join-Path $repo '.toolchains/jdk-21') -Directory |
-        Where-Object { Test-Path (Join-Path $_.FullName 'bin/java.exe') } |
-        Select-Object -First 1
-    if (-not $java) { throw 'Java 21 toolchain is missing.' }
-    $env:JAVA_HOME = $java.FullName
-    $env:Path = "$(Join-Path $java.FullName 'bin');$env:Path"
+    $javaExecutableName = if ($IsWindows) { 'java.exe' } else { 'java' }
+    $javaHome = $env:JAVA_HOME
+    $javaExecutable = if ($javaHome) { Join-Path $javaHome "bin/$javaExecutableName" } else { $null }
+    $javaVersion = if ($javaExecutable -and (Test-Path -LiteralPath $javaExecutable -PathType Leaf)) {
+        & $javaExecutable -version 2>&1 | Out-String
+    } else { '' }
+    if ($javaVersion -notmatch '(?i)(?:version\s+")?21\.') {
+        $localJdk = Get-ChildItem -LiteralPath (Join-Path $repo '.toolchains/jdk-21') -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin/$javaExecutableName") -PathType Leaf } |
+            Select-Object -First 1
+        if (-not $localJdk) { throw 'Java 21 is required in JAVA_HOME or .toolchains/jdk-21/.' }
+        $javaHome = $localJdk.FullName
+        $javaExecutable = Join-Path $javaHome "bin/$javaExecutableName"
+        $javaVersion = & $javaExecutable -version 2>&1 | Out-String
+    }
+    if ($javaVersion -notmatch '(?i)(?:version\s+")?21\.') {
+        throw 'The selected Java runtime is not Java 21.'
+    }
+    $env:JAVA_HOME = $javaHome
+    $env:Path = "$(Join-Path $javaHome 'bin')$([System.IO.Path]::PathSeparator)$env:Path"
+    $mavenProgram = if ($IsWindows) { Join-Path $repo 'mvnw.cmd' } else { 'bash' }
+    $mavenPrefix = if ($IsWindows) { @() } else { @((Join-Path $repo 'mvnw')) }
 
-    Invoke-Checked 'Maven full reactor verification' (Join-Path $repo 'mvnw.cmd') @(
+    Invoke-Checked 'Maven full reactor verification' $mavenProgram ($mavenPrefix + @(
         '-B', '-ntp', '-Dtest=*Test,*Tests,*IT', '-Dsurefire.failIfNoSpecifiedTests=false', 'verify'
-    ) 'maven-verify.log'
+    )) 'maven-verify.log'
     Invoke-Checked 'Frontend clean install' 'npm' @('--prefix', 'web/ops-console', 'ci') 'npm-ci.log'
     Invoke-Checked 'OpenAPI type drift' 'npm' @('--prefix', 'web/ops-console', 'run', 'api:check') 'api-check.log'
     Invoke-Checked 'Frontend lint' 'npm' @('--prefix', 'web/ops-console', 'run', 'lint') 'lint.log'
@@ -117,10 +133,10 @@ try {
     ) 'playwright-install.log'
 
     for ($round = 1; $round -le 2; $round++) {
-        Invoke-Checked "Deterministic Eval round $round" (Join-Path $repo 'mvnw.cmd') @(
+        Invoke-Checked "Deterministic Eval round $round" $mavenProgram ($mavenPrefix + @(
             '-B', '-ntp', '-pl', 'apps/ops-api',
             '-Dtest=EvalRunIT#deterministicRunsAreReproduciblePersistedAndComparable', 'test'
-        ) "eval-$round.log"
+        )) "eval-$round.log"
     }
 
     Invoke-Compose 'Compose config validation' @('config', '--quiet') 'compose-config.log'
@@ -135,9 +151,9 @@ try {
 
     $env:SENTINELOPS_REAL_EVIDENCE_IT = 'true'
     try {
-        Invoke-Checked 'Real Prometheus and Loki diagnosis' (Join-Path $repo 'mvnw.cmd') @(
+        Invoke-Checked 'Real Prometheus and Loki diagnosis' $mavenProgram ($mavenPrefix + @(
             '-B', '-ntp', '-pl', 'apps/ops-api', '-Dtest=RealEvidenceDiagnosisIT', 'test'
-        ) 'real-evidence.log'
+        )) 'real-evidence.log'
     } finally {
         Remove-Item Env:SENTINELOPS_REAL_EVIDENCE_IT -ErrorAction SilentlyContinue
     }
@@ -154,9 +170,9 @@ try {
     Invoke-Checked 'Playwright incident and governance workflows' 'npm' @(
         '--prefix', 'web/ops-console', 'run', 'e2e', '--', '--project=chromium'
     ) 'playwright.log'
-    Invoke-Checked 'Prompt-injection boundary' (Join-Path $repo 'mvnw.cmd') @(
+    Invoke-Checked 'Prompt-injection boundary' $mavenProgram ($mavenPrefix + @(
         '-B', '-ntp', '-pl', 'apps/ops-api', '-Dtest=PromptInjectionIT', 'test'
-    ) 'prompt-injection.log'
+    )) 'prompt-injection.log'
     Invoke-OptionalProviderSmoke
     Invoke-Checked 'Git whitespace validation' 'git' @(
         '-c', "safe.directory=$($repo.Replace('\', '/'))", 'diff', '--check'

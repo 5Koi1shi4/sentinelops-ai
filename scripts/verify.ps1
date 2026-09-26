@@ -1,11 +1,39 @@
 [CmdletBinding()]
-param()
+param([switch]$Release)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $false
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+if ($Release) {
+    $policyNames = @(
+        'version-policy.ps1',
+        'compose-policy.ps1',
+        'backup-restore-policy.ps1',
+        'release-workflow-policy.ps1'
+    )
+    foreach ($policyName in $policyNames) {
+        $policyPath = Join-Path $repositoryRoot "tests/production/$policyName"
+        if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) {
+            throw "Required release policy is missing: $policyName"
+        }
+        Write-Host "==> Release policy: $policyName"
+        & pwsh -NoProfile -File $policyPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Release policy failed: $policyName"
+        }
+    }
+
+    Write-Host '==> Stage 2A full reactor, PostgreSQL, Eval, evidence, and browser verification'
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'verify-stage2a.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Stage 2A verification failed during the release gate.'
+    }
+    Write-Host 'Local release code and integration gate passed; run security, fault, restore, and production smoke gates separately.'
+    return
+}
+
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $verificationDirectory = Join-Path $repositoryRoot "build/verification/$timestamp"
 $composeArguments = @(

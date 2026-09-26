@@ -37,6 +37,19 @@ class ProductionStartupValidatorTest {
                 env -> env.setProperty("spring.security.oauth2.resourceserver.jwt.jwk-set-uri",
                         "http://idp.example.test/keys"),
                 env -> env.setProperty("spring.datasource.password", "sentinelops"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=require"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full&sslfactory=org.postgresql.ssl.NonValidatingFactory"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full&ssl%66actory=org.postgresql.ssl.NonValidatingFactory"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full&sslhostnameverifier=example.AcceptAll"),
+                env -> env.setProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full&user=inline&password=inline"),
+                env -> env.setProperty("spring.data.redis.ssl.enabled", "false"),
                 env -> env.setProperty("sentinelops.execution-ticket.private-jwk", "inline-private-key"),
                 env -> env.setProperty("sentinelops.execution-ticket.private-jwk-secret-ref", ""),
                 env -> env.setProperty("SENTINELOPS_TICKET_SIGNING_JWK", ""));
@@ -94,6 +107,36 @@ class ProductionStartupValidatorTest {
         }
     }
 
+    @Test
+    void allowsPlaintextOnlyForTheExplicitLocalDataServiceAliases() {
+        var local = safeSettings()
+                .withProperty("spring.datasource.url", "jdbc:postgresql://postgres:5432/sentinelops")
+                .withProperty("spring.data.redis.host", "valkey")
+                .withProperty("spring.data.redis.ssl.enabled", "false");
+        assertThatCode(() -> ProductionStartupValidator.validate(local))
+                .doesNotThrowAnyException();
+
+        local.setProperty("spring.data.redis.host", "valkey.example.test");
+        assertThatThrownBy(() -> ProductionStartupValidator.validate(local))
+                .isInstanceOf(IllegalStateException.class);
+
+        var inlineCredentials = safeSettings()
+                .withProperty("spring.datasource.url",
+                        "jdbc:postgresql://postgres:5432/sentinelops?user=inline&password=inline")
+                .withProperty("spring.data.redis.host", "valkey")
+                .withProperty("spring.data.redis.ssl.enabled", "false");
+        assertThatThrownBy(() -> ProductionStartupValidator.validate(inlineCredentials))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void acceptsTheDocumentedJavaTrustStoreSslFactory() {
+        var settings = safeSettings().withProperty("spring.datasource.url",
+                "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory");
+        assertThatCode(() -> ProductionStartupValidator.validate(settings))
+                .doesNotThrowAnyException();
+    }
+
     private MockEnvironment safeSettings() {
         return new MockEnvironment()
                 .withProperty("sentinelops.ai.provider", "manual-only")
@@ -101,7 +144,11 @@ class ProductionStartupValidatorTest {
                 .withProperty("sentinelops.security.issuer", "https://idp.example.test/realms/prod")
                 .withProperty("spring.security.oauth2.resourceserver.jwt.jwk-set-uri",
                         "https://idp.example.test/keys")
+                .withProperty("spring.datasource.url",
+                        "jdbc:postgresql://db.example.test:5432/sentinelops?sslmode=verify-full")
                 .withProperty("spring.datasource.password", "unique-random-secret")
+                .withProperty("spring.data.redis.host", "valkey.example.test")
+                .withProperty("spring.data.redis.ssl.enabled", "true")
                 .withProperty("sentinelops.execution-ticket.private-jwk-secret-ref",
                         "env:SENTINELOPS_TICKET_SIGNING_JWK")
                 .withProperty("SENTINELOPS_TICKET_SIGNING_JWK", "test-private-jwk");

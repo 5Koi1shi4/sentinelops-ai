@@ -1,0 +1,307 @@
+name: Release validation and immutable artifact
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentinelops-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gates:
+    name: Verify and package tagged release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21.0.12.1+1
+          cache: maven
+
+      - name: Set up Node.js 24.8.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.8.0
+
+      - name: Require tag, Maven, and frontend versions to match
+        id: release-version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -ne 'tag') {
+              throw 'Release validation must run from a Git tag.'
+          }
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$') {
+              throw 'Release tag must use the exact vX.Y.Z form.'
+          }
+          $releaseVersion = $Matches.version
+
+          [xml] $pom = [System.IO.File]::ReadAllText((Join-Path $env:GITHUB_WORKSPACE 'pom.xml'))
+          $namespaces = [System.Xml.XmlNamespaceManager]::new($pom.NameTable)
+          $namespaces.AddNamespace('m', 'http://maven.apache.org/POM/4.0.0')
+          $mavenVersionNode = $pom.SelectSingleNode('/m:project/m:version', $namespaces)
+          if ($null -eq $mavenVersionNode) {
+              throw 'The root pom.xml version is missing.'
+          }
+          $mavenVersion = $mavenVersionNode.InnerText
+
+          $frontendManifest = Get-Content -LiteralPath 'web/ops-console/package.json' -Raw | ConvertFrom-Json
+          $frontendLock = Get-Content -LiteralPath 'web/ops-console/package-lock.json' -Raw | ConvertFrom-Json -AsHashtable
+          $frontendVersion = [string]$frontendManifest.version
+          $frontendLockVersion = [string]$frontendLock.packages[''].version
+          if ($mavenVersion -cne $releaseVersion -or
+              $frontendVersion -cne $releaseVersion -or
+              $frontendLockVersion -cne $releaseVersion) {
+              throw "Version mismatch: tag=$releaseVersion Maven=$mavenVersion frontend=$frontendVersion lock=$frontendLockVersion."
+          }
+
+          "version=$releaseVersion" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+      - name: Require production smoke and restore targets
+        shell: pwsh
+        env:
+          SENTINELOPS_RESTORE_TEST_URL: ${{ secrets.SENTINELOPS_RESTORE_TEST_URL }}
+          SENTINELOPS_WEB_URL: ${{ vars.SENTINELOPS_WEB_URL }}
+          SENTINELOPS_PROD_OIDC_ISSUER: ${{ vars.SENTINELOPS_PROD_OIDC_ISSUER }}
+          SENTINELOPS_PROD_OPERATOR_TOKEN: ${{ secrets.SENTINELOPS_PROD_OPERATOR_TOKEN }}
+          SENTINELOPS_PROD_OBSERVER_TOKEN: ${{ secrets.SENTINELOPS_PROD_OBSERVER_TOKEN }}
+          SENTINELOPS_PROD_WEBHOOK_SOURCE: ${{ vars.SENTINELOPS_PROD_WEBHOOK_SOURCE }}
+          SENTINELOPS_PROD_WEBHOOK_SECRET: ${{ secrets.SENTINELOPS_PROD_WEBHOOK_SECRET }}
+          SENTINELOPS_PROD_SERVICE_KEY: ${{ secrets.SENTINELOPS_PROD_SERVICE_KEY }}
+          SENTINELOPS_OIDC_BROWSER_CLIENT_ID: ${{ vars.SENTINELOPS_OIDC_BROWSER_CLIENT_ID }}
+          SENTINELOPS_OIDC_REDIRECT_URI: ${{ vars.SENTINELOPS_OIDC_REDIRECT_URI }}
+        run: |
+          $required = @(
+              'SENTINELOPS_RESTORE_TEST_URL', 'SENTINELOPS_WEB_URL',
+              'SENTINELOPS_PROD_OIDC_ISSUER', 'SENTINELOPS_PROD_OPERATOR_TOKEN',
+              'SENTINELOPS_PROD_OBSERVER_TOKEN', 'SENTINELOPS_PROD_WEBHOOK_SOURCE',
+              'SENTINELOPS_PROD_WEBHOOK_SECRET', 'SENTINELOPS_PROD_SERVICE_KEY',
+              'SENTINELOPS_OIDC_BROWSER_CLIENT_ID', 'SENTINELOPS_OIDC_REDIRECT_URI'
+          )
+          $missing = @($required | Where-Object {
+              [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_, 'Process'))
+          })
+          if ($missing.Count -gt 0) {
+              throw "Required release acceptance configuration is missing: $($missing -join ', ')."
+          }
+
+          $webUri = [Uri]$env:SENTINELOPS_WEB_URL
+          $issuerUri = [Uri]$env:SENTINELOPS_PROD_OIDC_ISSUER
+          if ($webUri.Scheme -ne 'https' -or $webUri.AbsolutePath -ne '/' -or
+              $webUri.Query -or $webUri.Fragment -or $webUri.UserInfo -or
+              $issuerUri.Scheme -ne 'https' -or $issuerUri.UserInfo -or
+              $issuerUri.Query -or $issuerUri.Fragment) {
+              throw 'Release smoke requires an HTTPS console origin and HTTPS OIDC issuer.'
+          }
+          $expectedRedirect = $webUri.GetLeftPart([UriPartial]::Authority) + '/auth/callback'
+          if ($env:SENTINELOPS_OIDC_REDIRECT_URI -cne $expectedRedirect) {
+              throw 'SENTINELOPS_OIDC_REDIRECT_URI must exactly match the console /auth/callback URL.'
+          }
+
+      - name: Check Docker engine
+        run: docker info
+
+      - name: Install PostgreSQL 17 client tools
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+          psql --version
+          pg_dump --version
+          pg_restore --version
+
+      - name: Verify PostgreSQL client tools in PowerShell PATH
+        shell: pwsh
+        run: |
+          foreach ($name in @('psql', 'pg_dump', 'pg_restore')) {
+              $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($null -eq $command) {
+                  throw "PostgreSQL client '$name' is not available to PowerShell on PATH."
+              }
+              & $command.Source --version
+              if ($LASTEXITCODE -ne 0) {
+                  throw "PostgreSQL client '$name' failed its version check."
+              }
+          }
+
+      - name: Provide pinned k6 CLI for the fault drill
+        shell: pwsh
+        run: |
+          $binDirectory = Join-Path $env:RUNNER_TEMP 'sentinelops-release-bin'
+          New-Item -ItemType Directory -Path $binDirectory -Force | Out-Null
+          $wrapperPath = Join-Path $binDirectory 'k6'
+          $wrapper = @'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          docker run --rm --network host \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE" \
+            grafana/k6:0.55.0 "$@"
+          '@
+          [System.IO.File]::WriteAllText($wrapperPath, $wrapper.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+          & chmod +x $wrapperPath
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not make the pinned k6 wrapper executable.'
+          }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $binDirectory
+
+      - name: Run release verification, PostgreSQL/browser acceptance, and AI Eval
+        shell: pwsh
+        run: ./scripts/verify.ps1 -Release
+
+      - name: Run dependency, filesystem, and image security scans
+        shell: pwsh
+        env:
+          CI: "true"
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: ./scripts/security-scan.ps1 -ReportDirectory build/security
+
+      - name: Run full fault and alert-storm drill
+        shell: pwsh
+        run: ./scripts/fault-drill.ps1 -Scenario full
+
+      - name: Run required database restore drill
+        shell: pwsh
+        env:
+          SENTINELOPS_RESTORE_TEST_URL: ${{ secrets.SENTINELOPS_RESTORE_TEST_URL }}
+        run: ./scripts/restore-check.ps1 -TestDatabaseUrl $env:SENTINELOPS_RESTORE_TEST_URL
+
+      - name: Run production browser smoke
+        shell: pwsh
+        env:
+          SENTINELOPS_WEB_URL: ${{ vars.SENTINELOPS_WEB_URL }}
+          SENTINELOPS_PROD_OIDC_ISSUER: ${{ vars.SENTINELOPS_PROD_OIDC_ISSUER }}
+          SENTINELOPS_PROD_OPERATOR_TOKEN: ${{ secrets.SENTINELOPS_PROD_OPERATOR_TOKEN }}
+          SENTINELOPS_PROD_OBSERVER_TOKEN: ${{ secrets.SENTINELOPS_PROD_OBSERVER_TOKEN }}
+          SENTINELOPS_PROD_WEBHOOK_SOURCE: ${{ vars.SENTINELOPS_PROD_WEBHOOK_SOURCE }}
+          SENTINELOPS_PROD_WEBHOOK_SECRET: ${{ secrets.SENTINELOPS_PROD_WEBHOOK_SECRET }}
+          SENTINELOPS_PROD_SERVICE_KEY: ${{ secrets.SENTINELOPS_PROD_SERVICE_KEY }}
+        run: ./scripts/smoke.ps1 -Profile production
+
+      - name: Build versioned images and assemble SBOM/checksum bundle
+        id: release-bundle
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
+          SENTINELOPS_WEB_URL: ${{ vars.SENTINELOPS_WEB_URL }}
+          SENTINELOPS_PROD_OIDC_ISSUER: ${{ vars.SENTINELOPS_PROD_OIDC_ISSUER }}
+          SENTINELOPS_OIDC_BROWSER_CLIENT_ID: ${{ vars.SENTINELOPS_OIDC_BROWSER_CLIENT_ID }}
+          SENTINELOPS_OIDC_REDIRECT_URI: ${{ vars.SENTINELOPS_OIDC_REDIRECT_URI }}
+        run: |
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE "build/release/$env:RELEASE_VERSION"
+          if (Test-Path -LiteralPath $releaseRoot) {
+              throw "Release bundle output already exists: $releaseRoot"
+          }
+          $imageDirectory = Join-Path $releaseRoot 'images'
+          $sbomDirectory = Join-Path $releaseRoot 'sbom'
+          $scanDirectory = Join-Path $releaseRoot 'scans'
+          New-Item -ItemType Directory -Path $imageDirectory, $sbomDirectory, $scanDirectory -Force | Out-Null
+          $trivyCache = Join-Path $env:GITHUB_WORKSPACE 'build/security/trivy-cache'
+          if (-not (Test-Path -LiteralPath $trivyCache -PathType Container)) {
+              throw 'Security gate did not leave a Trivy cache for scanning the release archives.'
+          }
+
+          function Invoke-ReleaseImageScan {
+              param([string] $ArchivePath, [string] $ImageName)
+              $relativeArchive = [System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $ArchivePath).Replace('\', '/')
+              foreach ($scanner in @('vuln', 'secret')) {
+                  $reportPath = Join-Path $scanDirectory "$ImageName-$scanner.json"
+                  $relativeReport = [System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $reportPath).Replace('\', '/')
+                  $scanArguments = @(
+                      'run', '--rm',
+                      '--mount', "type=bind,source=$env:GITHUB_WORKSPACE,target=/workspace",
+                      '--mount', "type=bind,source=$trivyCache,target=/root/.cache/trivy",
+                      'aquasec/trivy:0.74.0', 'image',
+                      '--input', "/workspace/$relativeArchive",
+                      '--format', 'json', '--output', "/workspace/$relativeReport",
+                      '--scanners', $scanner, '--exit-code', '1', '--timeout', '15m'
+                  )
+                  if ($scanner -eq 'vuln') { $scanArguments += @('--severity', 'HIGH,CRITICAL') }
+                  & docker @scanArguments
+                  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+                      throw "Final $ImageName archive did not pass the $scanner scan."
+                  }
+              }
+          }
+
+          $images = @(
+              @{ name = 'ops-api'; repository = 'sentinelops/ops-api'; dockerfile = 'apps/ops-api/Dockerfile' },
+              @{ name = 'ops-executor'; repository = 'sentinelops/ops-executor'; dockerfile = 'apps/ops-executor/Dockerfile' },
+              @{ name = 'demo-service'; repository = 'sentinelops/demo-service'; dockerfile = 'apps/demo-service/Dockerfile' },
+              @{ name = 'ops-console'; repository = 'sentinelops/ops-console'; dockerfile = 'web/ops-console/Dockerfile' }
+          )
+          foreach ($image in $images) {
+              $imageTag = "$($image.repository):$env:RELEASE_VERSION"
+              $arguments = @(
+                  'buildx', 'build', '--pull', '--load',
+                  '--file', $image.dockerfile,
+                  '--tag', $imageTag,
+                  '--label', "org.opencontainers.image.version=$env:RELEASE_VERSION",
+                  '--label', "org.opencontainers.image.revision=$env:GITHUB_SHA"
+              )
+              if ($image.name -eq 'ops-console') {
+                  $arguments += @(
+                      '--build-arg', "VITE_OIDC_ISSUER=$env:SENTINELOPS_PROD_OIDC_ISSUER",
+                      '--build-arg', "VITE_OIDC_CLIENT_ID=$env:SENTINELOPS_OIDC_BROWSER_CLIENT_ID",
+                      '--build-arg', "VITE_OIDC_REDIRECT_URI=$env:SENTINELOPS_OIDC_REDIRECT_URI"
+                  )
+              }
+              $arguments += '.'
+              Write-Host "docker $($arguments -join ' ')"
+              & docker @arguments
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Versioned multi-stage image build failed for $($image.name)."
+              }
+
+              $archivePath = Join-Path $imageDirectory "$($image.name)-$env:RELEASE_VERSION.tar"
+              & docker image save --output $archivePath $imageTag
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Could not archive versioned image $imageTag."
+              }
+              Invoke-ReleaseImageScan -ArchivePath $archivePath -ImageName $image.name
+          }
+
+          $sboms = @(
+              @{ source = 'build/security/sentinelops-java.cdx.json'; destination = 'sentinelops-java.cdx.json' },
+              @{ source = 'build/security/ops-console.cdx.json'; destination = 'ops-console.cdx.json' }
+          )
+          foreach ($sbom in $sboms) {
+              if (-not (Test-Path -LiteralPath $sbom.source -PathType Leaf)) {
+                  throw "Required Java/Node SBOM is missing after security scan: $($sbom.source)"
+              }
+              Copy-Item -LiteralPath $sbom.source -Destination (Join-Path $sbomDirectory $sbom.destination)
+          }
+
+          $checksumLines = foreach ($file in (Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Sort-Object FullName)) {
+              $relativePath = [System.IO.Path]::GetRelativePath($releaseRoot, $file.FullName).Replace('\', '/')
+              $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $relativePath"
+          }
+          [System.IO.File]::WriteAllLines(
+              (Join-Path $releaseRoot 'SHA256SUMS'),
+              [string[]]$checksumLines,
+              [System.Text.UTF8Encoding]::new($false)
+          )
+          Write-Host "Assembled version $env:RELEASE_VERSION with four version-tagged image archives, Java/Node SBOMs, and SHA256SUMS."
+
+      - name: Upload immutable release artifact after all gates pass
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentinelops-v${{ steps.release-version.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/release/${{ steps.release-version.outputs.version }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

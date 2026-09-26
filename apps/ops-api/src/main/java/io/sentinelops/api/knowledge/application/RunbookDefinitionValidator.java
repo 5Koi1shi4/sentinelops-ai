@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Validates the small executable Runbook definition allowlist used by the V5 demo seed.
+ * Validates the deliberately small executable Runbook definition allowlist.
  *
  * <p>The definition is kept deliberately narrower than a general JSON Schema implementation so
  * that published versions cannot introduce an unregistered adapter, operation, probe, or rollback
@@ -38,11 +38,20 @@ public final class RunbookDefinitionValidator {
             throw invalid("runbookKey does not match the requested Runbook");
         }
         requireTextEquals(root, "risk", "R1");
-        requireTextEquals(root, "adapterId", "demo-http");
-
-        validateParameters(root.get("parameters"));
-        validateSteps(root.get("steps"));
-        validateVerification(root.get("verification"));
+        String adapterId = requireText(root, "adapterId");
+        switch (adapterId) {
+            case "demo-http" -> {
+                validateParameters(root.get("parameters"), BigInteger.ONE);
+                validateSteps(root.get("steps"), "recover-one", "recover_connection_pool");
+                validateVerification(root.get("verification"), "demo_checkout_health");
+            }
+            case "production-http" -> {
+                validateParameters(root.get("parameters"), BigInteger.valueOf(3));
+                validateSteps(root.get("steps"), "restart-one", "restart_service");
+                validateVerification(root.get("verification"), "production_checkout_health");
+            }
+            default -> throw invalid("adapterId is not an allowed value");
+        }
 
         JsonNode rollback = root.get("rollback");
         if (rollback == null || !rollback.isNull()) {
@@ -50,7 +59,7 @@ public final class RunbookDefinitionValidator {
         }
     }
 
-    private void validateParameters(JsonNode parameters) {
+    private void validateParameters(JsonNode parameters, BigInteger maximumReplicas) {
         JsonNode schema = requireObject(parameters, "parameters");
         requireExactFields(schema, PARAMETERS_FIELDS, "parameters");
         requireTextEquals(schema, "type", "object");
@@ -61,7 +70,7 @@ public final class RunbookDefinitionValidator {
         requireExactFields(replicas, REPLICAS_FIELDS, "parameters.properties.replicas");
         requireTextEquals(replicas, "type", "integer");
         requireIntegerEquals(replicas, "minimum", BigInteger.ONE);
-        requireIntegerEquals(replicas, "maximum", BigInteger.ONE);
+        requireIntegerEquals(replicas, "maximum", maximumReplicas);
 
         JsonNode required = schema.get("required");
         if (required == null
@@ -80,20 +89,20 @@ public final class RunbookDefinitionValidator {
         }
     }
 
-    private void validateSteps(JsonNode steps) {
+    private void validateSteps(JsonNode steps, String stepId, String operation) {
         if (steps == null || !steps.isArray() || steps.size() != 1) {
             throw invalid("steps must contain exactly one step");
         }
         JsonNode step = requireObject(steps.get(0), "steps[0]");
         requireExactFields(step, STEP_FIELDS, "steps[0]");
-        requireTextEquals(step, "stepId", "recover-one");
-        requireTextEquals(step, "operation", "recover_connection_pool");
+        requireTextEquals(step, "stepId", stepId);
+        requireTextEquals(step, "operation", operation);
     }
 
-    private void validateVerification(JsonNode verification) {
+    private void validateVerification(JsonNode verification, String probeName) {
         JsonNode probe = requireObject(verification, "verification");
         requireExactFields(probe, VERIFICATION_FIELDS, "verification");
-        requireTextEquals(probe, "probe", "demo_checkout_health");
+        requireTextEquals(probe, "probe", probeName);
         requireNumberEquals(probe, "successThreshold", BigDecimal.ONE);
         requireIntegerInRange(probe, "attempts", 1, 20);
         requireIntegerInRange(probe, "intervalSeconds", 1, 60);
