@@ -509,8 +509,8 @@ vulnerabilities:
             throw "Workflow '$workflowName' must restore the OWASP/npm cache before running its security gates."
         }
         $javaVersionMatch = [regex]::Match($workflowText, '(?m)^\s+java-version:\s*(\S+)\s*$')
-        if (-not $javaVersionMatch.Success -or $javaVersionMatch.Groups[1].Value -ne '21.0.12.1+1') {
-            throw "Workflow '$workflowName' must request the exact Temurin 21.0.12.1+1 release selected for the Java security baseline."
+        if (-not $javaVersionMatch.Success -or $javaVersionMatch.Groups[1].Value -ne '21.0.12.1') {
+            throw "Workflow '$workflowName' must request the Temurin 21.0.12.1 security patch using setup-java's supported version syntax."
         }
         $scanStep = [regex]::Match($workflowText, '(?ms)^      - name: Run required tests, dependency audits, SBOM generation and Trivy scans\r?\n.*?(?=^      - name:|\z)').Value
         if ($scanStep -notmatch '(?m)^\s+NVD_API_KEY:\s*\$\{\{\s*secrets\.NVD_API_KEY\s*\}\}\s*$') {
