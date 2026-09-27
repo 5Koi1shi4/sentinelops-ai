@@ -786,7 +786,7 @@ vulnerabilities:
 printf '%s\n' 'openjdk version "21.0.0-test"'
 exit 0
 '@
-            [System.IO.File]::WriteAllText($javaFixturePath, $javaFixtureScript, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($javaFixturePath, $javaFixtureScript.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
             $javaMode = [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite -bor [System.IO.UnixFileMode]::UserExecute -bor [System.IO.UnixFileMode]::GroupRead -bor [System.IO.UnixFileMode]::GroupExecute -bor [System.IO.UnixFileMode]::OtherRead -bor [System.IO.UnixFileMode]::OtherExecute
             [System.IO.File]::SetUnixFileMode($javaFixturePath, $javaMode)
         }
