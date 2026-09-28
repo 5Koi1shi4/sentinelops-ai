@@ -6,7 +6,7 @@
 
 ## 当前判定（2026-09-28）
 
-**NO-GO。**代码已达到本地发布候选：`verify.ps1 -Release`、完整安全扫描和故障演练的本地记录见[生产加固进度](../runbooks/stage-2b-progress.md)；基线提交 `97dca14` 的 [GitHub CI](https://github.com/5Koi1shi4/sentinelops-ai/actions/runs/36291911314) 已通过。后续提交仍须核对其自身的 CI 结果。
+NO-GO。代码已达到本地发布候选：`verify.ps1 -Release`、完整安全扫描和故障演练的本地记录见[生产加固进度](../runbooks/stage-2b-progress.md)；基线提交 `97dca14` 的 [GitHub CI](https://github.com/5Koi1shi4/sentinelops-ai/actions/runs/36291911314) 已通过。后续提交仍须核对其自身的 CI 结果。
 
 目前尚未取得真实生产主机/域名、组织 OIDC 客户端、受控密钥、实际 `checkout` 目标及独立恢复测试数据库，因此无法完成目标端契约、真实备份恢复、生产浏览器烟测和切换后验收。尚未创建 `v1.0.0` 标签。剩余技术边界见[已知限制](../known-limitations.md)。
 
