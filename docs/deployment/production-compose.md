@@ -1,6 +1,6 @@
 # 生产 Compose 部署
 
-此配置部署单组织 SentinelOps 控制平面、Executor、控制台与 Caddy。默认连接组织提供的 PostgreSQL 17/pgvector、Valkey、OIDC、Prometheus、Loki 和模型服务。`local-data` 仅供明确选择的单机部署；它不提供数据库高可用。没有外部域名、身份提供方、目标服务和密钥时，`docker compose config` 只能验证配置结构，不能证明生产烟测通过。
+此配置部署单组织 SentinelOps 控制平面、Executor、控制台与 Caddy。正式放行需逐项满足[上线条件](go-live-checklist.md)。默认连接组织提供的 PostgreSQL 17/pgvector、Valkey、OIDC、Prometheus、Loki 和模型服务。`local-data` 仅供明确选择的单机部署；它不提供数据库高可用。没有外部域名、身份提供方、目标服务和密钥时，`docker compose config` 只能验证配置结构，不能证明生产烟测通过。
 
 ## 前置条件
 

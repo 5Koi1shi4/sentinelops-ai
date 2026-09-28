@@ -70,7 +70,7 @@ Stage 2A 真实证据、AI Eval 和治理闭环验收运行：
 
 ## 生产部署候选
 
-生产组合、TLS 入口、外部 OIDC/数据库/模型接入和受限 Executor 目录见 [生产 Compose 手册](docs/deployment/production-compose.md)。它不包含 Demo 服务、故障入口或默认账号。首条可审查的真实执行定义是固定的 `production-http/restart_service`，经人工审批后只能调用运维登记的 `checkout` 目标，并由配置好的 HTTPS 健康探针判断恢复；目标端幂等和 fencing 仍须在实际环境核验。备份、升级和事件响应分别见 [备份恢复](docs/deployment/backup-restore.md)、[升级](docs/deployment/upgrade.md)及[运维](docs/deployment/operations.md)。
+正式上线的逐项条件、通过证据和当前缺口见 [上线放行清单](docs/deployment/go-live-checklist.md)。生产组合、TLS 入口、外部 OIDC/数据库/模型接入和受限 Executor 目录见 [生产 Compose 手册](docs/deployment/production-compose.md)。它不包含 Demo 服务、故障入口或默认账号。首条可审查的真实执行定义是固定的 `production-http/restart_service`，经人工审批后只能调用运维登记的 `checkout` 目标，并由配置好的 HTTPS 健康探针判断恢复；目标端幂等和 fencing 仍须在实际环境核验。备份、升级和事件响应分别见 [备份恢复](docs/deployment/backup-restore.md)、[升级](docs/deployment/upgrade.md)及[运维](docs/deployment/operations.md)。
 
 发布候选的本地代码、数据库、Eval 和浏览器门禁入口为：
 
